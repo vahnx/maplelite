@@ -70,5 +70,5 @@ also in front while Windows reports a Direct3D fullscreen app running (`SHQueryU
 
 1. Is it acceptable to build the overlay behind an "experimental" switch, before Nexon says anything?
 2. Should it show only while the game is in front, or always?
-3. Which plugins get overlay access first (suggestion: chat highlights from MapleMemory, EXP rate from
+3. Which plugins get overlay access first (suggestion: chat highlights from Chat History, EXP rate from
    XP Tracker)?

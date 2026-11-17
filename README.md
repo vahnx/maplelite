@@ -16,7 +16,7 @@ reads game memory, captures packets, or sends input to the game, and neither can
 | `src/MapleLite.Platform.Mac` | macOS (milestone 5): ScreenCaptureKit, Apple Vision OCR. Stub today. |
 | `src/MapleLite.Platform.Linux` | Linux (milestone 5): X11/XComposite for the Wine/Proton window, Tesseract OCR. Stub today. |
 | `src/MapleLite.Host` | The Avalonia app: Game page, plugin pages, Settings, themes, plugin loader. |
-| `plugins/*` | Bundled plugins: MapleMemory, Sale Card, XP Tracker. |
+| `plugins/*` | Bundled plugins: Chat History (the MapleMemory app, ported), Sale Card, XP Tracker. |
 | `tests/MapleLite.Tests` | xUnit tests on fake engines and synthetic frames (never the live game). |
 
 ## Shared OCR
@@ -62,13 +62,18 @@ dotnet test
 dotnet run --project src/MapleLite.Host -f net8.0-windows10.0.19041.0
 ```
 
+Build output goes outside the source tree (`%LOCALAPPDATA%\MapleLite-build` on Windows, `./artifacts` elsewhere).
+This folder is synced by Google Drive, which locks freshly written build files; keeping `bin`/`obj` out of it avoids that.
+The Windows app ends up in `%LOCALAPPDATA%\MapleLite-build\bin\MapleLite.Host\debug_net8.0-windows10.0.19041.0\MapleLite.exe`.
+
 macOS / Linux: `dotnet run --project src/MapleLite.Host -f net8.0`, or publish with `-r osx-arm64` / `-r linux-x64`.
 
 Test switches (run the built `MapleLite` executable). None of them touch the live game:
 
 - `--replay <png>`: run the whole host on a saved capture instead of the game
-- `--ocrtest <png> --out <txt>`: read a saved capture with the shared OCR and write the lines
-- `--snapshot <png> [--theme <id>] [--page game|settings|<plugin-id>]`: render the window to a PNG and exit
+- `--ocrtest <png> --out <txt> [--region x,y,w,h]`: read a saved capture with the shared OCR and write the lines
+  (with `--region`: chat-glyph cleanup, compared across enlarge modes)
+- `--snapshot <png> [--theme <id>] [--page game|settings|<plugin-id>] [--wait <s>]`: render the window to a PNG and exit|settings|<plugin-id>]`: render the window to a PNG and exit
 
 Set `MAPLELITE_DATA` to a scratch folder to keep test runs away from your real settings.
 
@@ -84,3 +89,17 @@ its own `AssemblyLoadContext`; Core, Sdk and Avalonia come from the host. Use `c
 frames (keep the callback short), `context.Ocr` for text, `context.Storage` for data, and the `PanelKit`
 helpers or `ml.*` resources for a page that follows the theme. Third-party plugins will come through a
 reviewed hub that builds them from source.
+
+## Chat History (formerly MapleMemory)
+
+The chat journal from the MapleMemory app, as a plugin. Its parsers, spam and partial-repeat filters, time filters and
+loot tracker are the app's code, unchanged; its 99 self-test checks run as xUnit tests. What changed: frames come
+from the host's capture loop and text from the shared OCR (chat-glyph cleanup, row grouping, bicubic enlarge), and
+the page is Avalonia, so it runs on every OS the host does.
+
+- Journal format is unchanged: `messages-YYYY-MM.jsonl` and `settings.json`, now in `plugins/chathistory/` under the
+  MapleLite data folder.
+- On first start it **copies** the MapleMemory app's history and chat area from `%LOCALAPPDATA%\MapleMemory`
+  (the app's files are never changed). "Import from MapleMemory app" copies any lines added since, without duplicates.
+- Checked against the app on a saved capture: the same three messages, channels (Megaphone, Buddy, Megaphone) and
+  wrapped-line assembly.

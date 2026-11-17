@@ -21,6 +21,7 @@ internal static class Program
         Options.SnapshotPath = Arg(args, "--snapshot");
         Options.Theme = Arg(args, "--theme");
         Options.Page = Arg(args, "--page");
+        if (double.TryParse(Arg(args, "--wait"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var wait)) Options.SnapshotWait = wait;
         return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
     }
 
@@ -52,6 +53,21 @@ internal static class Program
             using var platform = CreatePlatform();
             using var ocr = new OcrService(platform.Ocr);
             var frame = FrameIo.LoadPng(png);
+            if (Arg(Environment.GetCommandLineArgs(), "--region") is { } spec)
+            {
+                // --region x,y,w,h: read just that area, chat-glyph cleanup + rows, with each enlarge mode
+                var n = spec.Split(',').Select(int.Parse).ToArray();
+                var crop = frame.Crop(new MapleLite.Core.Imaging.Region(n[0], n[1], n[2], n[3]));
+                lines.Add($"engine: {ocr.EngineName}  region {spec}");
+                foreach (var scaling in Enum.GetValues<OcrScaling>())
+                {
+                    var r = ocr.ReadAsync(crop, new OcrRequest(crop.Bounds) { Preprocess = OcrPreprocessor.ChatGlyphs, Grouping = OcrGrouping.Rows, Scaling = scaling, Cache = false }).GetAwaiter().GetResult();
+                    lines.Add($"-- {scaling}: {r.Lines.Count} rows, scale {r.Scale}");
+                    lines.AddRange(r.Lines.Select(l => $"  [{l.Box.X:0},{l.Box.Y:0}] {l.Text}"));
+                }
+                File.WriteAllText(outPath ?? "ocrtest.txt", string.Join(Environment.NewLine, lines));
+                return 0;
+            }
             var plain = ocr.ReadAllAsync(frame).GetAwaiter().GetResult();
             var chat = ocr.ReadAsync(frame, new OcrRequest(frame.Bounds) { Preprocess = OcrPreprocessor.ChatGlyphs, Grouping = OcrGrouping.Rows }).GetAwaiter().GetResult();
             var again = ocr.ReadAllAsync(frame).GetAwaiter().GetResult();
@@ -75,4 +91,6 @@ internal static class Options
     public static string? ReplayPath;
     /// <summary>--snapshot &lt;png&gt; [--theme id] [--page game|settings|plugin-id]: render the window to a PNG and exit.</summary>
     public static string? SnapshotPath, Theme, Page;
+    /// <summary>--wait &lt;seconds&gt;: how long to run before the snapshot (default 3).</summary>
+    public static double SnapshotWait = 3;
 }

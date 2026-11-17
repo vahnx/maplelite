@@ -73,7 +73,7 @@ internal sealed class MainWindow : Window
     /// <summary>Test switch: render the window to a PNG once the page has had time to fill, then quit.</summary>
     public void SnapshotAndExit(string path, Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
     {
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(Options.SnapshotWait) };
         timer.Tick += (_, _) =>
         {
             timer.Stop();

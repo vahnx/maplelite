@@ -2,7 +2,7 @@
   <!-- A plugin compiles against Core + Sdk + Avalonia only. The host supplies those at run time. -->
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
-    <RootNamespace>MapleLite.Plugins.MapleMemory</RootNamespace>
+    <RootNamespace>MapleLite.Plugins.ChatHistory</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\MapleLite.Sdk\MapleLite.Sdk.csproj" Private="false" />

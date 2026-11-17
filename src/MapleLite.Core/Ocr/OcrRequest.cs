@@ -2,7 +2,16 @@ using MapleLite.Core.Imaging;
 
 namespace MapleLite.Core.Ocr;
 
-public enum OcrScaling { Smooth, Nearest }
+/// <summary>How a crop is enlarged before OCR.</summary>
+public enum OcrScaling
+{
+    /// <summary>Bilinear.</summary>
+    Smooth,
+    /// <summary>Repeated pixels: hard pixel fonts stay crisp.</summary>
+    Nearest,
+    /// <summary>Bicubic (Catmull-Rom): sharper edges than bilinear, close to System.Drawing's HighQualityBicubic.</summary>
+    Bicubic,
+}
 
 public enum OcrGrouping
 {

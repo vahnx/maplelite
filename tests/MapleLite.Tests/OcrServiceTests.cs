@@ -206,3 +206,25 @@ public class ImageTests
         Assert.False(ImageOps.LooksBlack(f));
     }
 }
+
+public class BicubicTests
+{
+    [Fact]
+    public void Flat_color_stays_flat_and_size_includes_padding()
+    {
+        var f = new Frame(5, 3); Array.Fill(f.Px, Pixel.Rgb(120, 60, 200));
+        var s = ImageOps.ScaleBicubic(f, 3, pad: 2);
+        Assert.Equal((5 + 4) * 3, s.W); Assert.Equal((3 + 4) * 3, s.H);
+        Assert.All(s.Px, p => Assert.Equal(Pixel.Rgb(120, 60, 200), p));
+    }
+
+    [Fact]
+    public void Edge_stays_sharper_than_bilinear()
+    {
+        // black | white step: bicubic's midpoint transition is steeper (closer to 0/255 one pixel off the edge)
+        var f = new Frame(8, 1, Enumerable.Range(0, 8).Select(x => x < 4 ? Pixel.Black : Pixel.White).ToArray());
+        var cubic = ImageOps.ScaleBicubic(f, 3); var linear = ImageOps.Scale(f, 3, smooth: true);
+        int x = 4 * 3 - 3; // one source pixel left of the edge
+        Assert.True(Pixel.R(cubic.At(x, 0)) <= Pixel.R(linear.At(x, 0)));
+    }
+}

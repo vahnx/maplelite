@@ -7,5 +7,7 @@
   <ItemGroup>
     <ProjectReference Include="..\MapleLite.Core\MapleLite.Core.csproj" />
     <PackageReference Include="Avalonia" Version="$(AvaloniaVersion)" />
+    <!-- Shipped by the host (with its Fluent styles) so plugins can show tables without bundling it. -->
+    <PackageReference Include="Avalonia.Controls.DataGrid" Version="$(AvaloniaDataGridVersion)" />
   </ItemGroup>
 </Project>

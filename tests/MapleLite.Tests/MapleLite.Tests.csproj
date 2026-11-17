@@ -12,5 +12,6 @@
     <ProjectReference Include="..\..\src\MapleLite.Core\MapleLite.Core.csproj" />
     <ProjectReference Include="..\..\src\MapleLite.Sdk\MapleLite.Sdk.csproj" />
     <ProjectReference Include="..\..\plugins\MapleLite.Plugins.XpTracker\MapleLite.Plugins.XpTracker.csproj" />
+    <ProjectReference Include="..\..\plugins\MapleLite.Plugins.ChatHistory\MapleLite.Plugins.ChatHistory.csproj" />
   </ItemGroup>
 </Project>

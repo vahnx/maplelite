@@ -5,8 +5,20 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <AvaloniaVersion>11.3.21</AvaloniaVersion>
+    <!-- DataGrid is versioned on its own; 11.3.13 is its newest 11.x and works with Avalonia 11.3.x. -->
+    <AvaloniaDataGridVersion>11.3.13</AvaloniaDataGridVersion>
     <Company>CheesyFrog Technologies</Company>
     <Product>MapleLite</Product>
     <Version>0.1.0</Version>
+  </PropertyGroup>
+  <!--
+    Build output (bin/obj) goes outside the source folder: this folder is synced by Google Drive, which
+    locks freshly written build files and breaks builds. On Windows it goes to %LOCALAPPDATA%/MapleLite-build;
+    elsewhere to ./artifacts (gitignored). Override with -p:ArtifactsPath=...
+  -->
+  <PropertyGroup>
+    <UseArtifactsOutput>true</UseArtifactsOutput>
+    <ArtifactsPath Condition="'$(ArtifactsPath)' == '' and '$(LOCALAPPDATA)' != ''">$(LOCALAPPDATA)/MapleLite-build</ArtifactsPath>
+    <ArtifactsPath Condition="'$(ArtifactsPath)' == ''">$(MSBuildThisFileDirectory)artifacts</ArtifactsPath>
   </PropertyGroup>
 </Project>

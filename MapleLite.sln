@@ -19,7 +19,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MapleLite.Host", "src\Maple
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "plugins", "plugins", "{627211A3-0152-4D95-A443-C0D9EA1ED674}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MapleLite.Plugins.MapleMemory", "plugins\MapleLite.Plugins.MapleMemory\MapleLite.Plugins.MapleMemory.csproj", "{4CA03DFD-4EA2-4192-BAD4-58F9C5679861}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MapleLite.Plugins.ChatHistory", "plugins\MapleLite.Plugins.ChatHistory\MapleLite.Plugins.ChatHistory.csproj", "{4CA03DFD-4EA2-4192-BAD4-58F9C5679861}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MapleLite.Plugins.SaleCard", "plugins\MapleLite.Plugins.SaleCard\MapleLite.Plugins.SaleCard.csproj", "{3298697B-40A0-4972-942B-23B6F2E83BA7}"
 EndProject

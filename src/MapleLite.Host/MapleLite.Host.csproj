@@ -40,14 +40,20 @@
     and copies their own assembly (Core, Sdk and Avalonia always come from the host).
   -->
   <ItemGroup>
-    <BundledPlugin Include="MapleLite.Plugins.MapleMemory;MapleLite.Plugins.SaleCard;MapleLite.Plugins.XpTracker" />
+    <BundledPlugin Include="MapleLite.Plugins.ChatHistory;MapleLite.Plugins.SaleCard;MapleLite.Plugins.XpTracker" />
     <ProjectReference Include="@(BundledPlugin->'$(MSBuildThisFileDirectory)..\..\plugins\%(Identity)\%(Identity).csproj')"
                       ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
-  <Target Name="CopyBundledPlugins" AfterTargets="Build">
+  <!-- Inner (per-framework) builds only: the outer multi-target build has no OutDir and would copy into the source tree. -->
+  <Target Name="CopyBundledPlugins" AfterTargets="Build" Condition="'$(TargetFramework)' != ''">
+    <!-- Ask each plugin project where its assembly is, so this works with any output layout. -->
+    <MSBuild Projects="@(BundledPlugin->'$(MSBuildThisFileDirectory)../../plugins/%(Identity)/%(Identity).csproj')" Targets="GetTargetPath"
+             Properties="Configuration=$(Configuration)" RemoveProperties="TargetFramework;RuntimeIdentifier">
+      <Output TaskParameter="TargetOutputs" ItemName="_PluginDll" />
+    </MSBuild>
     <ItemGroup>
-      <_PluginFile Include="$(MSBuildThisFileDirectory)..\..\plugins\%(BundledPlugin.Identity)\bin\$(Configuration)\net8.0\%(BundledPlugin.Identity).dll" Plugin="%(BundledPlugin.Identity)" />
-      <_PluginFile Include="$(MSBuildThisFileDirectory)..\..\plugins\%(BundledPlugin.Identity)\bin\$(Configuration)\net8.0\%(BundledPlugin.Identity).pdb" Plugin="%(BundledPlugin.Identity)" />
+      <_PluginFile Include="@(_PluginDll)" Plugin="%(Filename)" />
+      <_PluginFile Include="@(_PluginDll->'%(RootDir)%(Directory)%(Filename).pdb')" Plugin="%(Filename)" />
     </ItemGroup>
     <Copy SourceFiles="@(_PluginFile)" DestinationFolder="$(OutDir)plugins\%(_PluginFile.Plugin)" SkipUnchangedFiles="true" Condition="Exists('%(_PluginFile.FullPath)')" />
   </Target>

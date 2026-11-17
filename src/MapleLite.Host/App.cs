@@ -12,6 +12,11 @@ internal sealed class App : Application
     {
         Name = "MapleLite";
         Styles.Add(new FluentTheme());
+        // DataGrid ships with the host for plugins; its styles must be loaded once, here.
+        Styles.Add(new Avalonia.Markup.Xaml.Styling.StyleInclude(new Uri("avares://MapleLite/"))
+        {
+            Source = new Uri("avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml"),
+        });
     }
 
     public override async void OnFrameworkInitializationCompleted()

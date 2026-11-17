@@ -31,4 +31,43 @@ public static class PanelKit
         foreach (var c in children) s.Children.Add(c);
         return s;
     }
+
+    public static WrapPanel Wrap(params Control[] children)
+    {
+        var w = new WrapPanel();
+        foreach (var c in children) { c.Margin = new Thickness(0, 0, 8, 8); w.Children.Add(c); }
+        return w;
+    }
+
+    public static Button Button(string text, Action onClick, bool accent = false)
+    {
+        var b = new Button { Content = text };
+        if (accent) b.Classes.Add("accent");
+        b.Click += (_, _) => onClick();
+        return b;
+    }
+
+    /// <summary>A bitmap of a frame, for showing game pictures in a panel. Call on the UI thread.</summary>
+    public static Avalonia.Media.Imaging.WriteableBitmap ToBitmap(MapleLite.Core.Imaging.Frame f, Avalonia.Media.Imaging.WriteableBitmap? reuse = null)
+    {
+        var bmp = reuse != null && reuse.PixelSize.Width == f.W && reuse.PixelSize.Height == f.H ? reuse
+            : new Avalonia.Media.Imaging.WriteableBitmap(new PixelSize(f.W, f.H), new Vector(96, 96), Avalonia.Platform.PixelFormat.Bgra8888, Avalonia.Platform.AlphaFormat.Opaque);
+        using var fb = bmp.Lock();
+        for (int y = 0; y < f.H; y++) System.Runtime.InteropServices.Marshal.Copy(f.Px, y * f.W, fb.Address + y * fb.RowBytes, f.W);
+        return bmp;
+    }
+
+    /// <summary>Opens a folder in the OS file manager (Explorer, Finder, or the Linux default).</summary>
+    public static bool OpenFolder(string folder)
+    {
+        try
+        {
+            Directory.CreateDirectory(folder);
+            if (OperatingSystem.IsWindows()) System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true });
+            else if (OperatingSystem.IsMacOS()) System.Diagnostics.Process.Start("open", folder);
+            else System.Diagnostics.Process.Start("xdg-open", folder);
+            return true;
+        }
+        catch (Exception) { return false; }
+    }
 }

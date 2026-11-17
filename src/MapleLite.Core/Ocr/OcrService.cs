@@ -126,7 +126,9 @@ public sealed class OcrService : IOcr, IDisposable
             int fits = _engine!.MaxImageDimension / Math.Max(1, largest);
             int scale = request.Scale > 0 ? Math.Min(request.Scale, fits) : Math.Min(fits, 3);
             if (scale < 1) throw new ArgumentException($"Region {r} is larger than the OCR engine accepts ({_engine.MaxImageDimension}px). Read it in parts.");
-            var image = ImageOps.Scale(crop, scale, request.Scaling == OcrScaling.Smooth, pad);
+            var image = request.Scaling == OcrScaling.Bicubic
+                ? ImageOps.ScaleBicubic(crop, scale, pad)
+                : ImageOps.Scale(crop, scale, request.Scaling == OcrScaling.Smooth, pad);
 
             var raw = await _engine.RecognizeAsync(image, ct).ConfigureAwait(false);
             IReadOnlyList<OcrLine> lines = raw.Select(l => new OcrLine(l.Text.Trim(),
