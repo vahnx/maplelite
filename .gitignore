@@ -1,0 +1,11 @@
+bin/
+obj/
+*.user
+.vs/
+.idea/
+*.swp
+artifacts/
+TestResults/
+# saved captures can contain whispers and names; keep personal ones out of git
+captures/private/
+desktop.ini

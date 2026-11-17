@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Plain net8.0 with P/Invoke into CoreGraphics / ScreenCaptureKit / Vision, so it builds on any OS (no macOS workload needed). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>MapleLite.Platform.Mac</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\MapleLite.Core\MapleLite.Core.csproj" />
+  </ItemGroup>
+</Project>

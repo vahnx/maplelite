@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Plain net8.0 with P/Invoke into libX11/libXcomposite and libtesseract, so it builds on any OS. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>MapleLite.Platform.Linux</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\MapleLite.Core\MapleLite.Core.csproj" />
+  </ItemGroup>
+</Project>

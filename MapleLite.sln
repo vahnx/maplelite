@@ -1,0 +1,94 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{4362428F-4D33-4F03-941C-34E0CCE8D0B4}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MapleLite.Core", "src\MapleLite.Core\MapleLite.Core.csproj", "{B68D34B2-E44D-48CF-A1EB-FBF41B52FBBA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MapleLite.Sdk", "src\MapleLite.Sdk\MapleLite.Sdk.csproj", "{581B8665-01C4-44C0-9E99-2E8480E7C9A2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MapleLite.Platform.Windows", "src\MapleLite.Platform.Windows\MapleLite.Platform.Windows.csproj", "{BD42C81F-4A74-4304-B399-8AB40816FFC0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MapleLite.Platform.Mac", "src\MapleLite.Platform.Mac\MapleLite.Platform.Mac.csproj", "{9E6FBC79-FF36-4341-B082-F3E7F71C2F0A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MapleLite.Platform.Linux", "src\MapleLite.Platform.Linux\MapleLite.Platform.Linux.csproj", "{8E9A0467-168B-4829-8998-0527788F2D75}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MapleLite.Host", "src\MapleLite.Host\MapleLite.Host.csproj", "{744D890E-F02A-4AA8-BE88-18C60EB21B5B}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "plugins", "plugins", "{627211A3-0152-4D95-A443-C0D9EA1ED674}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MapleLite.Plugins.MapleMemory", "plugins\MapleLite.Plugins.MapleMemory\MapleLite.Plugins.MapleMemory.csproj", "{4CA03DFD-4EA2-4192-BAD4-58F9C5679861}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MapleLite.Plugins.SaleCard", "plugins\MapleLite.Plugins.SaleCard\MapleLite.Plugins.SaleCard.csproj", "{3298697B-40A0-4972-942B-23B6F2E83BA7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MapleLite.Plugins.XpTracker", "plugins\MapleLite.Plugins.XpTracker\MapleLite.Plugins.XpTracker.csproj", "{9782A018-6D36-4E62-9F64-8378532A4C0E}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{FB574EF1-14B9-4E01-BC25-62AEC0662F8A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MapleLite.Tests", "tests\MapleLite.Tests\MapleLite.Tests.csproj", "{80784F78-0C19-4853-A8B9-486E1F500F97}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B68D34B2-E44D-48CF-A1EB-FBF41B52FBBA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B68D34B2-E44D-48CF-A1EB-FBF41B52FBBA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B68D34B2-E44D-48CF-A1EB-FBF41B52FBBA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B68D34B2-E44D-48CF-A1EB-FBF41B52FBBA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{581B8665-01C4-44C0-9E99-2E8480E7C9A2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{581B8665-01C4-44C0-9E99-2E8480E7C9A2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{581B8665-01C4-44C0-9E99-2E8480E7C9A2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{581B8665-01C4-44C0-9E99-2E8480E7C9A2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BD42C81F-4A74-4304-B399-8AB40816FFC0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BD42C81F-4A74-4304-B399-8AB40816FFC0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BD42C81F-4A74-4304-B399-8AB40816FFC0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BD42C81F-4A74-4304-B399-8AB40816FFC0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9E6FBC79-FF36-4341-B082-F3E7F71C2F0A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9E6FBC79-FF36-4341-B082-F3E7F71C2F0A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9E6FBC79-FF36-4341-B082-F3E7F71C2F0A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9E6FBC79-FF36-4341-B082-F3E7F71C2F0A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8E9A0467-168B-4829-8998-0527788F2D75}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8E9A0467-168B-4829-8998-0527788F2D75}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8E9A0467-168B-4829-8998-0527788F2D75}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8E9A0467-168B-4829-8998-0527788F2D75}.Release|Any CPU.Build.0 = Release|Any CPU
+		{744D890E-F02A-4AA8-BE88-18C60EB21B5B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{744D890E-F02A-4AA8-BE88-18C60EB21B5B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{744D890E-F02A-4AA8-BE88-18C60EB21B5B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{744D890E-F02A-4AA8-BE88-18C60EB21B5B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4CA03DFD-4EA2-4192-BAD4-58F9C5679861}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4CA03DFD-4EA2-4192-BAD4-58F9C5679861}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4CA03DFD-4EA2-4192-BAD4-58F9C5679861}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4CA03DFD-4EA2-4192-BAD4-58F9C5679861}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3298697B-40A0-4972-942B-23B6F2E83BA7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3298697B-40A0-4972-942B-23B6F2E83BA7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3298697B-40A0-4972-942B-23B6F2E83BA7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3298697B-40A0-4972-942B-23B6F2E83BA7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9782A018-6D36-4E62-9F64-8378532A4C0E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9782A018-6D36-4E62-9F64-8378532A4C0E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9782A018-6D36-4E62-9F64-8378532A4C0E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9782A018-6D36-4E62-9F64-8378532A4C0E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{80784F78-0C19-4853-A8B9-486E1F500F97}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{80784F78-0C19-4853-A8B9-486E1F500F97}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{80784F78-0C19-4853-A8B9-486E1F500F97}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{80784F78-0C19-4853-A8B9-486E1F500F97}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{B68D34B2-E44D-48CF-A1EB-FBF41B52FBBA} = {4362428F-4D33-4F03-941C-34E0CCE8D0B4}
+		{581B8665-01C4-44C0-9E99-2E8480E7C9A2} = {4362428F-4D33-4F03-941C-34E0CCE8D0B4}
+		{BD42C81F-4A74-4304-B399-8AB40816FFC0} = {4362428F-4D33-4F03-941C-34E0CCE8D0B4}
+		{9E6FBC79-FF36-4341-B082-F3E7F71C2F0A} = {4362428F-4D33-4F03-941C-34E0CCE8D0B4}
+		{8E9A0467-168B-4829-8998-0527788F2D75} = {4362428F-4D33-4F03-941C-34E0CCE8D0B4}
+		{744D890E-F02A-4AA8-BE88-18C60EB21B5B} = {4362428F-4D33-4F03-941C-34E0CCE8D0B4}
+		{4CA03DFD-4EA2-4192-BAD4-58F9C5679861} = {627211A3-0152-4D95-A443-C0D9EA1ED674}
+		{3298697B-40A0-4972-942B-23B6F2E83BA7} = {627211A3-0152-4D95-A443-C0D9EA1ED674}
+		{9782A018-6D36-4E62-9F64-8378532A4C0E} = {627211A3-0152-4D95-A443-C0D9EA1ED674}
+		{80784F78-0C19-4853-A8B9-486E1F500F97} = {FB574EF1-14B9-4E01-BC25-62AEC0662F8A}
+	EndGlobalSection
+EndGlobal

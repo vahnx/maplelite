@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Two builds of one host:
+      net8.0-windows10.0.19041.0  Windows (Windows.Graphics.Capture + Windows OCR)
+      net8.0                      macOS and Linux (platform picked at runtime)
+    dotnet run -f net8.0-windows10.0.19041.0      on Windows
+    dotnet publish -f net8.0 -r osx-arm64          for a Mac
+    dotnet publish -f net8.0 -r linux-x64          for Linux
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFrameworks>net8.0-windows10.0.19041.0;net8.0</TargetFrameworks>
+    <RootNamespace>MapleLite.Host</RootNamespace>
+    <AssemblyName>MapleLite</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <PropertyGroup Condition="$(TargetFramework.Contains('-windows'))">
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" Version="$(AvaloniaVersion)" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="$(AvaloniaVersion)" />
+    <ProjectReference Include="..\MapleLite.Core\MapleLite.Core.csproj" />
+    <ProjectReference Include="..\MapleLite.Sdk\MapleLite.Sdk.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="$(TargetFramework.Contains('-windows'))">
+    <ProjectReference Include="..\MapleLite.Platform.Windows\MapleLite.Platform.Windows.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="!$(TargetFramework.Contains('-windows'))">
+    <ProjectReference Include="..\MapleLite.Platform.Mac\MapleLite.Platform.Mac.csproj" />
+    <ProjectReference Include="..\MapleLite.Platform.Linux\MapleLite.Platform.Linux.csproj" />
+  </ItemGroup>
+
+  <!--
+    Bundled plugins are loaded the same way third-party ones will be: from plugins/<Name>/<Name>.dll,
+    each in its own AssemblyLoadContext. The host doesn't reference them; it only builds them first
+    and copies their own assembly (Core, Sdk and Avalonia always come from the host).
+  -->
+  <ItemGroup>
+    <BundledPlugin Include="MapleLite.Plugins.MapleMemory;MapleLite.Plugins.SaleCard;MapleLite.Plugins.XpTracker" />
+    <ProjectReference Include="@(BundledPlugin->'$(MSBuildThisFileDirectory)..\..\plugins\%(Identity)\%(Identity).csproj')"
+                      ReferenceOutputAssembly="false" Private="false" />
+  </ItemGroup>
+  <Target Name="CopyBundledPlugins" AfterTargets="Build">
+    <ItemGroup>
+      <_PluginFile Include="$(MSBuildThisFileDirectory)..\..\plugins\%(BundledPlugin.Identity)\bin\$(Configuration)\net8.0\%(BundledPlugin.Identity).dll" Plugin="%(BundledPlugin.Identity)" />
+      <_PluginFile Include="$(MSBuildThisFileDirectory)..\..\plugins\%(BundledPlugin.Identity)\bin\$(Configuration)\net8.0\%(BundledPlugin.Identity).pdb" Plugin="%(BundledPlugin.Identity)" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_PluginFile)" DestinationFolder="$(OutDir)plugins\%(_PluginFile.Plugin)" SkipUnchangedFiles="true" Condition="Exists('%(_PluginFile.FullPath)')" />
+  </Target>
+</Project>
