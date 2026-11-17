@@ -44,9 +44,8 @@
     <ProjectReference Include="@(BundledPlugin->'$(MSBuildThisFileDirectory)..\..\plugins\%(Identity)\%(Identity).csproj')"
                       ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
-  <!-- Inner (per-framework) builds only: the outer multi-target build has no OutDir and would copy into the source tree. -->
-  <Target Name="CopyBundledPlugins" AfterTargets="Build" Condition="'$(TargetFramework)' != ''">
-    <!-- Ask each plugin project where its assembly is, so this works with any output layout. -->
+  <!-- Ask each plugin project where its assembly is, so this works with any output layout. -->
+  <Target Name="ResolveBundledPlugins">
     <MSBuild Projects="@(BundledPlugin->'$(MSBuildThisFileDirectory)../../plugins/%(Identity)/%(Identity).csproj')" Targets="GetTargetPath"
              Properties="Configuration=$(Configuration)" RemoveProperties="TargetFramework;RuntimeIdentifier">
       <Output TaskParameter="TargetOutputs" ItemName="_PluginDll" />
@@ -55,6 +54,13 @@
       <_PluginFile Include="@(_PluginDll)" Plugin="%(Filename)" />
       <_PluginFile Include="@(_PluginDll->'%(RootDir)%(Directory)%(Filename).pdb')" Plugin="%(Filename)" />
     </ItemGroup>
+  </Target>
+  <!-- Inner (per-framework) builds only: the outer multi-target build has no OutDir and would copy into the source tree. -->
+  <Target Name="CopyBundledPlugins" AfterTargets="Build" DependsOnTargets="ResolveBundledPlugins" Condition="'$(TargetFramework)' != ''">
     <Copy SourceFiles="@(_PluginFile)" DestinationFolder="$(OutDir)plugins\%(_PluginFile.Plugin)" SkipUnchangedFiles="true" Condition="Exists('%(_PluginFile.FullPath)')" />
+  </Target>
+  <!-- dotnet publish: put the plugins beside the published app too. -->
+  <Target Name="PublishBundledPlugins" AfterTargets="Publish" DependsOnTargets="ResolveBundledPlugins" Condition="'$(TargetFramework)' != ''">
+    <Copy SourceFiles="@(_PluginFile)" DestinationFolder="$(PublishDir)plugins\%(_PluginFile.Plugin)" SkipUnchangedFiles="true" Condition="Exists('%(_PluginFile.FullPath)')" />
   </Target>
 </Project>

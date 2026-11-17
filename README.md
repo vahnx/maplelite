@@ -55,7 +55,10 @@ process, display-only and click-through, unavailable in exclusive fullscreen) an
 
 ## Build and run
 
-Needs the .NET 8 SDK.
+You need the free [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) (Windows, macOS or Linux) and this repo.
+Run the commands in a terminal in the repo folder.
+
+### Windows
 
 ```bash
 dotnet build
@@ -63,18 +66,55 @@ dotnet test
 dotnet run --project src/MapleLite.Host -f net8.0-windows10.0.19041.0
 ```
 
-Build output goes outside the source tree (`%LOCALAPPDATA%\MapleLite-build` on Windows, `./artifacts` elsewhere).
-This folder is synced by Google Drive, which locks freshly written build files; keeping `bin`/`obj` out of it avoids that.
-The Windows app ends up in `%LOCALAPPDATA%\MapleLite-build\bin\MapleLite.Host\debug_net8.0-windows10.0.19041.0\MapleLite.exe`.
+Build output goes outside the source tree, to `%LOCALAPPDATA%\MapleLite-build` (this folder is synced by Google Drive,
+which locks freshly written build files). After a build you can also start the app directly from
+`%LOCALAPPDATA%\MapleLite-build\bin\MapleLite.Host\debug_net8.0-windows10.0.19041.0\MapleLite.exe`.
 
-macOS / Linux: `dotnet run --project src/MapleLite.Host -f net8.0`, or publish with `-r osx-arm64` / `-r linux-x64`.
+To make a standalone copy that runs on any 64-bit Windows 10/11 PC without .NET installed:
 
-Test switches (run the built `MapleLite` executable). None of them touch the live game:
+```bash
+dotnet publish src/MapleLite.Host -f net8.0-windows10.0.19041.0 -r win-x64 -c Release --self-contained -o publish/win
+```
+
+Then run `publish\win\MapleLite.exe`, or zip the `publish\win` folder to share it (about 120 MB, plugins included).
+
+### macOS
+
+Build on the Mac itself:
+
+```bash
+dotnet build
+dotnet run --project src/MapleLite.Host -f net8.0
+```
+
+Standalone copy (use `osx-x64` instead of `osx-arm64` for Intel Macs):
+
+```bash
+dotnet publish src/MapleLite.Host -f net8.0 -r osx-arm64 -c Release --self-contained -o publish/mac
+```
+
+Run it with `./publish/mac/MapleLite`. If the folder was built on Windows and copied over, first run
+`chmod +x publish/mac/MapleLite` (Windows doesn't keep the "executable" flag). A copy downloaded from the internet is
+blocked by Gatekeeper until you run `xattr -dr com.apple.quarantine publish/mac`, because it isn't signed yet.
+A proper double-clickable, signed `MapleLite.app` comes with the macOS milestone.
+
+**Status on macOS:** the window, themes, plugins and Settings all run, but the macOS capture and OCR layer isn't built
+yet (milestone 5), so it can't see the game. To try everything with a saved screenshot:
+`./publish/mac/MapleLite --replay path/to/capture.png` (OCR needs the macOS layer, so text reading stays off).
+
+### Linux
+
+Same as macOS with `-r linux-x64`; same status (the Linux capture and OCR layer is milestone 5).
+
+### Test switches
+
+Run the built `MapleLite` executable with these. None of them touch the live game:
 
 - `--replay <png>`: run the whole host on a saved capture instead of the game
 - `--ocrtest <png> --out <txt> [--region x,y,w,h]`: read a saved capture with the shared OCR and write the lines
   (with `--region`: chat-glyph cleanup, compared across enlarge modes)
-- `--snapshot <png> [--theme <id>] [--page game|settings|<plugin-id>] [--wait <s>]`: render the window to a PNG and exit|settings|<plugin-id>]`: render the window to a PNG and exit
+- `--snapshot <png> [--theme <id>] [--page game|settings|<plugin-id>] [--wait <s>]`: render the window to a PNG and exit
+- `--install <zip|dll>` / `--uninstall <plugin-id>`: add or remove a plugin at startup
 
 Set `MAPLELITE_DATA` to a scratch folder to keep test runs away from your real settings.
 
