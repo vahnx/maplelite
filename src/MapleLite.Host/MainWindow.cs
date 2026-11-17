@@ -29,6 +29,7 @@ internal sealed class MainWindow : Window
     {
         _shell = shell;
         Title = "MapleLite";
+        Icon = new WindowIcon(Avalonia.Platform.AssetLoader.Open(new Uri("avares://MapleLite/Assets/MapleLite.ico")));
         Width = 1180; Height = 780; MinWidth = 760; MinHeight = 520;
         this.Res(BackgroundProperty, ThemeTokens.Background);
 

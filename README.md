@@ -80,6 +80,21 @@ Then run `publish\win\MapleLite.exe`, or zip the `publish\win` folder to share i
 If the repo sits in a synced folder (Google Drive, OneDrive), publish outside it, for example
 `-o %LOCALAPPDATA%\MapleLite-publish\win`, so the sync client doesn't lock or upload the 120 MB of files.
 
+#### Desktop icon that always runs the latest
+
+```bash
+powershell -ExecutionPolicy Bypass -File tools\Install-DesktopShortcut.ps1
+```
+
+This puts a **MapleLite** icon on your desktop. Double-clicking it runs `tools\Start-MapleLite.ps1`, which:
+
+1. pulls the latest from GitHub (fast-forward only: if it can't update safely, it says why and starts your current copy);
+2. builds a Release copy, only when something changed;
+3. starts MapleLite.
+
+If MapleLite is already running it just says so; it never closes the app. Each run is logged to
+`%LOCALAPPDATA%\MapleLite-build\launcher.log`. Arguments after the script name are passed on to MapleLite.
+
 ### macOS
 
 Build on the Mac itself:

@@ -18,9 +18,12 @@
   </PropertyGroup>
   <PropertyGroup Condition="$(TargetFramework.Contains('-windows'))">
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <ApplicationIcon>Assets\MapleLite.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Window and taskbar icon on every OS (the .exe icon above is Windows-only). -->
+    <AvaloniaResource Include="Assets\MapleLite.ico" />
     <PackageReference Include="Avalonia.Desktop" Version="$(AvaloniaVersion)" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="$(AvaloniaVersion)" />
     <ProjectReference Include="..\MapleLite.Core\MapleLite.Core.csproj" />
