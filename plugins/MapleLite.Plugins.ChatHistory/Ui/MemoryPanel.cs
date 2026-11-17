@@ -26,7 +26,6 @@ internal sealed class MemoryPanel : UserControl
     readonly TextBox _fromTime = new() { Text = "00:00", Width = 80 }, _toTime = new() { Text = "23:59", Width = 80 };
     readonly ComboBox _zone = new() { MinWidth = 320 };
     readonly DataGrid _grid;
-    readonly LootView _loot;
     string _channel = "All";
     TimeFilter _time = TimeFilter.Open;
     bool _rangeValid = true;
@@ -86,14 +85,12 @@ internal sealed class MemoryPanel : UserControl
             Content = Stack(4,
                 Muted("• Chat History reads the chat box from the game picture with MapleLite's shared text reader. Keep chat scrolled to the newest messages."),
                 Muted("• A taller chat box with higher opacity gives the best coverage. Fast chat, wrapped lines and misread text can cause missing or duplicate lines."),
-                Muted("• Whisper, buddy, party and guild come from labels or classic chat colors. Trade dialogs are checked about every 3 s, pickups about every 0.6 s."),
+                Muted("• Whisper, buddy, party and guild come from labels or classic chat colors. Trade dialogs are checked about every 3 s. Pickups are tracked by the Loot plugin."),
                 Muted("• Times are when Chat History saw the text. Leave a date blank to apply the clock time on every day (From 19:00 = 7 PM onward each day)."),
                 Muted("• Logs stay on this computer. The table shows the newest 3,000 matching lines; CSV export includes all of them.")),
         };
 
         _grid = BuildGrid();
-        _loot = new LootView(engine);
-
         var journalTab = new DockPanel();
         var settings = new Expander { Header = "Options", Content = Stack(10, zoneRow, options) };
         var top = Stack(10, _channels, _search, range, _rangeError, Wrap(settings, help));
@@ -104,16 +101,7 @@ internal sealed class MemoryPanel : UserControl
         tableBox.Height = 560;
         journalTab.Children.Add(tableBox);
 
-        var tabs = new TabControl
-        {
-            ItemsSource = new[]
-            {
-                new TabItem { Header = "Journal", Content = journalTab },
-                new TabItem { Header = "Loot", Content = _loot },
-            },
-        };
-
-        Content = Stack(12, actions, Card(Stack(4, _summary, _status), 12), tabs);
+        Content = Stack(12, actions, Card(Stack(4, _summary, _status), 12), journalTab);
         _engine.Changed += () => Refresh(force: false);
         AttachedToVisualTree += (_, _) => Refresh(force: true);
         Refresh(force: true);
@@ -201,7 +189,6 @@ internal sealed class MemoryPanel : UserControl
         _grid.ItemsSource = rows.AsEnumerable().Reverse().Take(MaxRows).ToList();
         var all = _engine.Journal.Entries;
         _summary.Text = $"{rows.Count:N0} matching messages  ·  {all.Count:N0} saved  ·  {all.Count(e => e.Channel == "Trade")} trade events  ·  {all.Count(e => e.Channel == "Fame")} fame events";
-        _loot.Refresh();
     }
 
     async Task SelectArea()

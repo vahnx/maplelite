@@ -4,18 +4,20 @@ using MapleLite.Core.Ocr;
 using MapleLite.Core.Platform;
 using MapleLite.Host.Plugins;
 using MapleLite.Host.Themes;
+using MapleLite.Sdk;
 
 namespace MapleLite.Host;
 
-/// <summary>Everything the host owns: platform, the single capture loop, shared OCR, themes, plugins.</summary>
+/// <summary>Everything the host owns: platform, the single capture loop, shared OCR, events, themes, plugins.</summary>
 internal sealed class Shell : IAsyncDisposable
 {
     public HostSettings Settings { get; }
     public IPlatform Platform { get; }
     public OcrService Ocr { get; }
     public CaptureLoop Capture { get; }
+    public EventBus Events { get; } = new();
     public ThemeService Themes { get; } = new();
-    public PluginManager Plugins { get; } = new();
+    public PluginManager Plugins { get; }
     public event Action<string>? Notified;
     readonly string _logPath = Path.Combine(AppPaths.Root, "maplelite.log");
 
@@ -26,6 +28,8 @@ internal sealed class Shell : IAsyncDisposable
         Platform = Options.ReplayPath != null ? new ReplayPlatform(Options.ReplayPath, real) : real;
         Ocr = new OcrService(Platform.Ocr);
         Capture = new CaptureLoop(Platform) { Target = new GameTarget(Settings.ProcessName, Settings.ProcessId) };
+        Events.OnHandlerError = e => Log("event handler failed: " + e);
+        Plugins = new PluginManager(this);
     }
 
     public void SetTarget(GameTarget target)

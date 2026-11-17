@@ -41,6 +41,7 @@ internal sealed class MemoryEngine
         ClockZone.Zone = ClockZone.Find(Settings.TimeZoneId);
         MessageParser.StripTrailingAt = Settings.StripTrailingAt;
         foreach (var e in Journal.Entries.Where(e => e.Time >= DateTimeOffset.Now - SpamFilter.Window)) { _spam.Remember(e); _partials.Remember(e); }
+        PublishArea();
         _tick.Tick += (_, _) => Tick();
         _retry.Tick += async (_, _) => { if (!Running && !_stopping && !_detecting) await AutoStartAsync(); };
         Status = Settings.Chat == null ? "Looking for the chat box. Keep chat scrolled to the newest messages." : "Ready. Your saved chat area will be used.";
@@ -49,6 +50,12 @@ internal sealed class MemoryEngine
     }
 
     public void SaveSettings() => _ctx.Storage.Save("settings", Settings);
+
+    /// <summary>Tells other plugins (Loot) where the chat box is, so they can leave it out of their reads.</summary>
+    public void PublishArea()
+    {
+        if (Settings.Chat is { } c) _ctx.Events.Publish(new ChatAreaEvent(c.ToRegion(), Settings.FrameWidth, Settings.FrameHeight, _ctx.Manifest.Id));
+    }
 
     (int files, int lines) ImportFromAppOnce()
     {
@@ -169,6 +176,7 @@ internal sealed class MemoryEngine
         Settings.FrameWidth = frame.W; Settings.FrameHeight = frame.H;
         Settings.ManualChat = manual;
         SaveSettings();
+        PublishArea();
     }
 
     void Flush()
@@ -179,6 +187,7 @@ internal sealed class MemoryEngine
             if (e.Channel != "Loot" && Settings.SuppressSpam && (_spam.ShouldSuppress(e) || _partials.ShouldSkip(e))) { _pending.Dequeue(); continue; }
             Journal.Add(e);   // throws on a disk error: the entry stays pending and is retried next tick
             _spam.Remember(e); _partials.Remember(e);
+            _ctx.Events.Publish(new ChatMessageEvent(e.Time, e.Channel, e.Text, e.Source, _ctx.Manifest.Id));
             _pending.Dequeue();
         }
     }

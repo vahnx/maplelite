@@ -18,8 +18,10 @@ public sealed record PluginManifest(string Id, string Name, string Version, stri
 }
 
 /// <summary>
-/// A MapleLite plugin. The host makes one instance, calls <see cref="StartAsync"/>, asks for its panel,
-/// and calls <see cref="StopAsync"/> on exit.
+/// A MapleLite plugin. The host makes an instance, calls <see cref="StartAsync"/>, asks for its panel,
+/// and calls <see cref="StopAsync"/> when the plugin is switched off or the app exits. Switching it on again
+/// makes a fresh instance. Keep the constructor cheap: the host also creates one just to read the manifest.
+/// Frame and event subscriptions made through the context are cleaned up by the host on stop.
 ///
 /// What plugins get: game frames, the shared OCR, storage, themes, notifications.
 /// What plugins never get: input to the game, game memory, packets, or their own screen capture.
@@ -43,6 +45,8 @@ public interface IPluginContext
     IFrameSource Frames { get; }
     IPluginStorage Storage { get; }
     IThemeService Themes { get; }
+    /// <summary>Events shared between plugins (chat lines, chat box position, …).</summary>
+    IEventBus Events { get; }
     /// <summary>The mouse position in the game's client area, when known (for tooltip readers).</summary>
     (int X, int Y)? CursorInGame();
     /// <summary>A short message in the host's notification area.</summary>

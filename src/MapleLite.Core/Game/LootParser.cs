@@ -1,6 +1,6 @@
-// Ported unchanged from the MapleMemory app (only the namespace differs).
+// From the MapleMemory app; shared in Core so the Loot and Chat History plugins (and others) read pickups the same way.
 using System.Text.RegularExpressions;
-namespace MapleLite.Plugins.ChatHistory;
+namespace MapleLite.Core.Game;
 
 // One pickup read from the game's own notification text.
 // Kind is "Item", "Mesos" (gained) or "MesosLost" (dropped or lost).
@@ -31,7 +31,7 @@ public static class LootParser {
  }
 
  public static LootDrop? Parse(string raw) {
-  string text = MessageParser.StripStamp(raw);
+  string text = GameText.StripStamp(raw);
   var gained = MesosGained.Match(text);
   if (gained.Success && Number(gained.Groups["n"].Value) is > 0 and var plus) return new("Mesos", "Mesos", plus);
   var lost = MesosLost.Match(text);

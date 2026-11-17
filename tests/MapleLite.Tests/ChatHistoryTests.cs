@@ -1,8 +1,10 @@
 using System.Text.Json;
 using MapleLite.Core.Capture;
+using MapleLite.Core.Game;
 using MapleLite.Core.Imaging;
 using MapleLite.Core.Ocr;
 using MapleLite.Plugins.ChatHistory;
+using MapleLite.Plugins.Loot;
 using Xunit;
 
 namespace MapleLite.Tests;
@@ -353,12 +355,6 @@ public class LootTests
         Assert.Equal(("Squishy Liquid", 2L), (liquid!.Name, liquid.Quantity));
         Assert.NotNull(LootParser.Parse("You have gained ltems (Squishy Liquid 2)"));
     }
-
-    [Theory]
-    [InlineData(5_000, "5,000")]
-    [InlineData(250_000, "250K")]
-    [InlineData(12_000_000, "12M")]
-    public void Stack_labels(long q, string text) => Assert.Equal(text, LootView.StackLabel(q).Text);
 }
 
 [Collection("ChatParser")]

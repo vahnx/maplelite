@@ -25,13 +25,15 @@ internal sealed class App : Application
         {
             _shell = new Shell();
             _shell.Themes.Apply(Options.Theme ?? _shell.Settings.ThemeId);
-            _shell.Plugins.LoadAll(_shell);
+            _shell.Plugins.Discover();
             var window = new MainWindow(_shell);
             desktop.MainWindow = window;
             desktop.ShutdownRequested += async (_, _) => { if (_shell != null) await _shell.DisposeAsync(); };
             base.OnFrameworkInitializationCompleted();
             _shell.Capture.Start();
-            await _shell.Plugins.StartAllAsync();
+            await _shell.Plugins.StartEnabledAsync();
+            if (Options.InstallPath != null) _shell.Notify((await _shell.Plugins.InstallAsync(Options.InstallPath)).message);
+            if (Options.UninstallId != null && _shell.Plugins.Entries.FirstOrDefault(p => p.Manifest.Id == Options.UninstallId) is { } doomed) _shell.Notify(await _shell.Plugins.RemoveAsync(doomed));
             window.RefreshNav();
             if (Options.Page != null) window.Navigate(Options.Page);
             if (Options.SnapshotPath != null) window.SnapshotAndExit(Options.SnapshotPath, desktop);

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    A minimal third-party plugin, as a starting point. Build it, zip HelloPlugin.dll (and .pdb), then in MapleLite:
+    Settings > Plugins > Add plugin…, or from a script:
+      MapleLite (install switch) path/to/HelloPlugin.zip   (see README, "Test switches")
+    Target plain net8.0 (not net8.0-windows) so the same .dll runs on Windows, macOS and Linux.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>HelloPlugin</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Compile against the SDK only; the host supplies Core, Sdk and Avalonia at run time (Private=false: don't ship them). -->
+    <ProjectReference Include="..\..\src\MapleLite.Sdk\MapleLite.Sdk.csproj" Private="false" />
+    <PackageReference Include="Avalonia" Version="$(AvaloniaVersion)" />
+  </ItemGroup>
+</Project>

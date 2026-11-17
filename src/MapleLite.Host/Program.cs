@@ -10,6 +10,7 @@ internal static class Program
     /// Test switches (never touch the live game):
     ///   --replay &lt;png&gt;                       run the host on a saved capture instead of the game
     ///   --snapshot &lt;png&gt; [--theme id] [--page name]   render the host window to a PNG, then exit
+    ///   --install &lt;zip|dll&gt;, --uninstall &lt;plugin-id&gt;      add or remove a plugin at startup
     ///   --ocrtest &lt;png&gt; [--out &lt;txt&gt;]       read a saved capture with the shared OCR and write the lines
     /// </summary>
     [STAThread]
@@ -21,6 +22,8 @@ internal static class Program
         Options.SnapshotPath = Arg(args, "--snapshot");
         Options.Theme = Arg(args, "--theme");
         Options.Page = Arg(args, "--page");
+        Options.InstallPath = Arg(args, "--install");
+        Options.UninstallId = Arg(args, "--uninstall");
         if (double.TryParse(Arg(args, "--wait"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var wait)) Options.SnapshotWait = wait;
         return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
     }
@@ -93,4 +96,6 @@ internal static class Options
     public static string? SnapshotPath, Theme, Page;
     /// <summary>--wait &lt;seconds&gt;: how long to run before the snapshot (default 3).</summary>
     public static double SnapshotWait = 3;
+    /// <summary>--install &lt;zip|dll&gt; / --uninstall &lt;plugin-id&gt;: add or remove a plugin at startup (for scripts and tests).</summary>
+    public static string? InstallPath, UninstallId;
 }

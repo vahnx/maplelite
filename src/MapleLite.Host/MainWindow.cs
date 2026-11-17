@@ -16,9 +16,14 @@ internal sealed class MainWindow : Window
     readonly ContentControl _content = new();
     readonly TextBlock _toast;
     readonly DispatcherTimer _toastTimer = new() { Interval = TimeSpan.FromSeconds(6) };
-    readonly Dictionary<object, Control> _pages = new();
+    readonly Dictionary<string, Control> _pages = new();
 
-    sealed record NavItem(string Title, string Key, LoadedPlugin? Plugin = null) { public override string ToString() => Title; }
+    /// <summary>A sidebar entry. Plugin pages are cached per plugin instance (PageKey), so a restarted plugin gets a new page.</summary>
+    sealed record NavItem(string Title, string Key, PluginEntry? Plugin = null)
+    {
+        public string PageKey => Plugin == null ? Key : $"{Key}#{Plugin.Generation}";
+        public override string ToString() => Title;
+    }
 
     public MainWindow(Shell shell)
     {
@@ -50,14 +55,19 @@ internal sealed class MainWindow : Window
 
         _nav.SelectionChanged += (_, _) => { if (_nav.SelectedItem is NavItem n) Show(n); };
         shell.Notified += m => Dispatcher.UIThread.Post(() => { _toast.Text = m; _toastTimer.Stop(); _toastTimer.Start(); });
+        shell.Plugins.Changed += () => Dispatcher.UIThread.Post(RefreshNav);
         RefreshNav();
     }
 
+    /// <summary>Rebuilds the sidebar from the running plugins, keeping the current page when it still exists.</summary>
     public void RefreshNav()
     {
         var items = new List<NavItem> { new("Game", "game") };
-        items.AddRange(_shell.Plugins.Plugins.Select(p => new NavItem(p.Plugin.Manifest.Name, "plugin:" + p.Plugin.Manifest.Id, p)));
+        items.AddRange(_shell.Plugins.Entries.Where(p => p.Running).Select(p => new NavItem(p.Manifest.Name, "plugin:" + p.Manifest.Id, p)));
         items.Add(new("Settings", "settings"));
+        // forget pages of plugins that stopped or restarted
+        var live = items.Select(i => i.PageKey).ToHashSet();
+        foreach (var key in _pages.Keys.Where(k => k.StartsWith("plugin:") && !live.Contains(k)).ToList()) _pages.Remove(key);
         var selected = (_nav.SelectedItem as NavItem)?.Key ?? "game";
         _nav.ItemsSource = items;
         _nav.SelectedItem = items.FirstOrDefault(i => i.Key == selected) ?? items[0];
@@ -90,7 +100,7 @@ internal sealed class MainWindow : Window
 
     void Show(NavItem item)
     {
-        if (!_pages.TryGetValue(item.Key, out var page))
+        if (!_pages.TryGetValue(item.PageKey, out var page))
         {
             page = item.Key switch
             {
@@ -98,7 +108,7 @@ internal sealed class MainWindow : Window
                 "settings" => new SettingsPage(_shell),
                 _ => PluginPage.Create(item.Plugin!),
             };
-            _pages[item.Key] = page;
+            _pages[item.PageKey] = page;
         }
         _content.Content = page;
     }

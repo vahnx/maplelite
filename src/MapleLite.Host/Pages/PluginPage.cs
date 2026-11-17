@@ -6,15 +6,15 @@ namespace MapleLite.Host.Pages;
 
 internal static class PluginPage
 {
-    public static Control Create(LoadedPlugin p)
+    public static Control Create(PluginEntry p)
     {
-        var m = p.Plugin.Manifest;
+        var m = p.Manifest;
         Control? panel = null;
-        string? error = p.StartError;
-        if (error == null)
+        string? error = p.Error;
+        if (error == null && p.Instance != null)
         {
-            try { panel = p.Plugin.CreatePanel(); }
-            catch (Exception e) { error = "Its page failed to open: " + e.Message; p.Context.Log("panel failed: " + e); }
+            try { panel = p.Instance.CreatePanel(); }
+            catch (Exception e) { error = "Its page failed to open: " + e.Message; p.Context?.Log("panel failed: " + e); }
         }
         var header = Ui.Stack(4, Ui.Heading(m.Name), Ui.Muted($"{m.Description}  ·  v{m.Version} by {m.Author}"));
         var body = Ui.Stack(18, header);
