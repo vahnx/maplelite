@@ -77,6 +77,8 @@ dotnet publish src/MapleLite.Host -f net8.0-windows10.0.19041.0 -r win-x64 -c Re
 ```
 
 Then run `publish\win\MapleLite.exe`, or zip the `publish\win` folder to share it (about 120 MB, plugins included).
+If the repo sits in a synced folder (Google Drive, OneDrive), publish outside it, for example
+`-o %LOCALAPPDATA%\MapleLite-publish\win`, so the sync client doesn't lock or upload the 120 MB of files.
 
 ### macOS
 
