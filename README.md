@@ -1,6 +1,6 @@
 # MapleLite
 
-A plugin host for **MapleStory Classic World**, in the spirit of RuneLite. It runs on **Windows, macOS
+A plugin host for **MapleStory Classic World**. It runs on **Windows, macOS
 and Linux** from one codebase (.NET 8 + Avalonia).
 
 MapleLite is **passive**. It reads the game only from pictures of its window. It never injects code,
