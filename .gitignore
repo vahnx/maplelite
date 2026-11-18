@@ -1,5 +1,10 @@
 bin/
 obj/
+# The top-level bin/ holds standalone builds from the build-* scripts: only the zips are committed.
+!/bin/
+/bin/*
+!/bin/*.zip
+!/bin/*.tar.gz
 *.user
 .vs/
 .idea/

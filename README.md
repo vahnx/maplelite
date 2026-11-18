@@ -65,9 +65,9 @@ process, display-only and click-through, unavailable in exclusive fullscreen) an
 
 ## Download or build in one step
 
-**Just want to run it?** Download the zip for your system from the
-[Releases](../../releases) page, unzip it and run `MapleLite.exe` (Windows) or `MapleLite` (macOS, Linux).
-Nothing else needs to be installed.
+**Just want to run it?** On 64-bit Windows 10/11, download
+[`bin/MapleLite-windows-x64.zip`](bin/MapleLite-windows-x64.zip), unzip it anywhere and run `MapleLite.exe`.
+Nothing else needs to be installed. macOS and Linux builds aren't posted yet; build one with the script below.
 
 **Want to build it yourself?** Download or clone this repo and run the script for your system. Each one makes a
 standalone copy in `bin/` that runs without .NET installed, plus a zip of it to share. If the
@@ -81,8 +81,8 @@ standalone copy in `bin/` that runs without .NET installed, plus a zip of it to 
 
 The CPU is picked automatically (`macos-x64` on an Intel Mac, `linux-arm64` on ARM Linux); `./build.sh --rid <rid>`
 builds for another one. On macOS, if Finder won't open `build-macos.command`, right-click it and choose **Open**.
-Builds are about 130 MB (50 MB zipped), plugins included. `bin/` is ignored by git, so to publish a version, attach
-the zips to a GitHub Release instead of committing them.
+Builds are about 130 MB (50 MB zipped), plugins included. Only the zips (and `.tar.gz` files) in `bin/` are committed;
+the unzipped folders are ignored by git.
 
 ## Build and run (for development)
 
