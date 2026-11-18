@@ -193,7 +193,7 @@ reviewed hub that builds them from source.
 
 ## Chat History
 
-The chat journal from the MapleMemory app, as a plugin. Its parsers, spam and partial-repeat filters and time filters
+A chat journal. Its parsers, spam and partial-repeat filters and time filters
 are the app's code, unchanged (the loot tracker is now the Loot plugin); its 99 self-test checks run as xUnit tests. What changed: frames come
 from the host's capture loop and text from the shared OCR (chat-glyph cleanup, row grouping, bicubic enlarge), and
 the page is Avalonia, so it runs on every OS the host does.
