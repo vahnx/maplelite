@@ -110,11 +110,36 @@ internal sealed class SettingsPage : UserControl
             _swatches,
             _themeErrors));
 
-        var overlayToggle = new ToggleSwitch { IsChecked = false, IsEnabled = false, OnContent = "On", OffContent = "Off" };
+        var rates = new ComboBox { MinWidth = 160 };
+        foreach (var fps in new[] { 10, 15, 20, 30, 45, 60 })
+        {
+            var item = new ComboBoxItem { Content = $"{fps} frames/s", Tag = (double)fps };
+            rates.Items.Add(item);
+            if (Math.Abs(fps - _shell.Capture.TargetFps) < 0.5) rates.SelectedItem = item;
+        }
+        rates.SelectionChanged += (_, _) =>
+        {
+            if (rates.SelectedItem is not ComboBoxItem { Tag: double fps }) return;
+            _shell.Capture.TargetFps = fps;
+            _shell.Settings.CaptureFps = fps;
+            _shell.Settings.Save();
+        };
+        var captureCard = Ui.Card(Ui.Stack(10,
+            Ui.Subheading("Capture rate"),
+            Ui.Row(12, rates, Ui.Muted("Applies right away. The Game page shows the rate actually reached.")),
+            Ui.Muted("How often MapleLite takes a picture of the game while plugins are listening. Higher catches short-lived text " +
+                     "(pickup notices) sooner but uses more CPU. It can't go above the game's own frame rate.")));
+
+        var overlayToggle = new ToggleSwitch { IsChecked = shell.Settings.OverlayEnabled, IsEnabled = OperatingSystem.IsWindows(), OnContent = "On", OffContent = "Off" };
+        overlayToggle.IsCheckedChanged += (_, _) => { shell.Settings.OverlayEnabled = overlayToggle.IsChecked == true; shell.Settings.Save(); };
         var overlayCard = Ui.Card(Ui.Stack(10,
             Ui.Subheading("Drawing on top of the game (overlay)"),
-            Ui.Row(12, overlayToggle, Ui.Muted("Not available yet")),
-            Ui.Muted("MapleLite shows everything in its own window. An overlay would be a separate, click-through window placed over the game, never drawn inside it. It stays off until Nexon's position on overlays is clear, and it can't work in exclusive fullscreen. See docs/OVERLAYS.md.")));
+            Ui.Row(12, overlayToggle, Ui.Muted(OperatingSystem.IsWindows() ? "Plugins such as Respawn Timer can draw over the game" : "Windows only for now")),
+            Ui.Row(12, Ui.Button("Show a test pattern", () => shell.Overlay?.ShowTest(TimeSpan.FromSeconds(20))),
+                Ui.Muted("Turn the overlay on, press this, then click into the game within 20 s: a ring in each corner of the game and a label in the middle.")),
+            Ui.Muted("A separate, click-through MapleLite window laid over the game. Nothing is drawn inside the game, and it never takes the mouse or keyboard. "
+                + "It shows only while the game is the active window, and not in exclusive fullscreen (use borderless). Nexon hasn't said whether overlays are allowed: "
+                + "use it at your own risk. See docs/OVERLAYS.md.")));
 
         var pluginCard = Ui.Card(Ui.Stack(12,
             Ui.Subheading("Plugins"),
@@ -126,9 +151,14 @@ internal sealed class SettingsPage : UserControl
         FillPlugins();
         _shell.Plugins.Changed += () => Avalonia.Threading.Dispatcher.UIThread.Post(FillPlugins);
 
-        Content = Ui.Page(Ui.Stack(18, Ui.Heading("Settings"), pluginCard, themeCard, overlayCard,
-            Ui.Muted($"MapleLite {typeof(SettingsPage).Assembly.GetName().Version?.ToString(3)} · {_shell.Platform.Name} · plugin API {MapleLite.Sdk.SdkInfo.ApiVersion}")));
+        Content = Ui.Page(Ui.Stack(18, Ui.Heading("Settings"), pluginCard, captureCard, themeCard, overlayCard,
+            Ui.Muted($"MapleLite {AppVersion} · {_shell.Platform.Name} · plugin API {MapleLite.Sdk.SdkInfo.ApiVersion}")));
     }
+
+    /// <summary>The version from Directory.Build.props with its pre-release tag (e.g. 0.1.0-alpha), without the build's commit hash.</summary>
+    static string AppVersion =>
+        (System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(SettingsPage).Assembly)?.InformationalVersion
+         ?? typeof(SettingsPage).Assembly.GetName().Version?.ToString(3) ?? "").Split('+')[0];
 
     void FillThemes()
     {

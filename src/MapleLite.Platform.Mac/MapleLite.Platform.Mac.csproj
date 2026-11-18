@@ -3,6 +3,8 @@
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>MapleLite.Platform.Mac</RootNamespace>
+    <!-- Objective-C message sends use function pointers; completion handlers are hand-made blocks. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\MapleLite.Core\MapleLite.Core.csproj" />

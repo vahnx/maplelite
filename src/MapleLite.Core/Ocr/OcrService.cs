@@ -27,6 +27,26 @@ public static class OcrExtensions
     /// <summary>Reads the whole frame with the default settings.</summary>
     public static Task<OcrResult> ReadAllAsync(this IOcr ocr, Frame frame, CancellationToken ct = default) =>
         ocr.ReadAsync(frame, new OcrRequest(frame.Bounds), ct);
+
+    /// <summary>
+    /// Reads like <see cref="IOcr.ReadAsync"/>, but never throws for a failed read: no recognizer, a region the
+    /// engine refuses, or an engine error all give no lines. For readers that run every second and simply try again
+    /// next time (cancellation still throws).
+    /// </summary>
+    public static async Task<IReadOnlyList<OcrLine>> TryReadAsync(this IOcr ocr, Frame frame, OcrRequest request, CancellationToken ct = default)
+    {
+        if (!ocr.Available) return Array.Empty<OcrLine>();
+        try { return (await ocr.ReadAsync(frame, request, ct).ConfigureAwait(false)).Lines; }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception) { return Array.Empty<OcrLine>(); }
+    }
+
+    /// <summary>
+    /// Reads a rectangle with smooth enlarging: the request most game-text readers make.
+    /// x, y, w, h are clipped to the frame.
+    /// </summary>
+    public static Task<IReadOnlyList<OcrLine>> TryReadAsync(this IOcr ocr, Frame frame, int x, int y, int w, int h, int scale, int pad = 0, CancellationToken ct = default) =>
+        ocr.TryReadAsync(frame, new OcrRequest(new Region(x, y, w, h)) { Scale = scale, Scaling = OcrScaling.Smooth, Pad = pad }, ct);
 }
 
 public sealed record OcrStats(long Reads, long CacheHits, long Failures, double LastMs, double AverageMs);

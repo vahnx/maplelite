@@ -1,0 +1,5 @@
+# Shell scripts must keep Unix line endings to run on Linux and macOS; cmd scripts keep Windows ones.
+*.sh      text eol=lf
+*.command text eol=lf
+*.cmd     text eol=crlf
+*.bat     text eol=crlf

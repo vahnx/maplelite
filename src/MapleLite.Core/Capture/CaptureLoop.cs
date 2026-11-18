@@ -6,8 +6,11 @@ namespace MapleLite.Core.Capture;
 
 public enum CaptureState { Stopped, Searching, Capturing, Minimized, Blocked, Error }
 
-/// <summary>One picture of the game's client area, shared by every subscriber.</summary>
-public sealed record GameFrame(Frame Frame, GameWindow Window, DateTimeOffset Time);
+/// <summary>
+/// One picture of the game, shared by every subscriber. Black letterbox bars are already cut off, so the game's
+/// top-left is at (0, 0); <paramref name="Offset"/> is where that sits in the window's client area.
+/// </summary>
+public sealed record GameFrame(Frame Frame, GameWindow Window, DateTimeOffset Time, (int X, int Y) Offset = default);
 
 public sealed record CaptureStatus(CaptureState State, string Message, GameWindow? Window, double Fps, long Frames)
 {
@@ -24,7 +27,8 @@ public interface IFrameSource
     /// <summary>
     /// Calls <paramref name="onFrame"/> with new frames, at most <paramref name="fps"/> times a second.
     /// The call runs on the capture thread: keep it short and hand slow work (OCR) to a task or queue.
-    /// The loop captures at the fastest rate any subscriber asks for (capped at 30).
+    /// While anyone subscribes the loop captures at the rate the user chose (<see cref="CaptureLoop.TargetFps"/>,
+    /// up to 60); each subscriber gets at most the rate it asks for.
     /// Dispose the result to stop.
     /// </summary>
     IDisposable Subscribe(Action<GameFrame> onFrame, double fps);
@@ -36,8 +40,9 @@ public interface IFrameSource
 /// </summary>
 public sealed class CaptureLoop : IFrameSource, IAsyncDisposable
 {
-    public const double MaxFps = 30;
+    public const double MinFps = 5, MaxFps = 60, DefaultFps = 30;
     const double IdleFps = 2;
+    double _targetFps = DefaultFps;
 
     readonly IPlatform _platform;
     readonly object _lock = new();
@@ -50,6 +55,9 @@ public sealed class CaptureLoop : IFrameSource, IAsyncDisposable
     public CaptureLoop(IPlatform platform) => _platform = platform;
 
     public GameTarget Target { get; set; } = new();
+
+    /// <summary>How many pictures a second to take while anyone is subscribed (5–60). The user picks it in Settings.</summary>
+    public double TargetFps { get => _targetFps; set => _targetFps = Math.Clamp(value, MinFps, MaxFps); }
     public CaptureStatus Status => _status;
     public GameFrame? Latest => _latest;
     public event Action<CaptureStatus>? StatusChanged;
@@ -72,7 +80,7 @@ public sealed class CaptureLoop : IFrameSource, IAsyncDisposable
 
     double WantedFps()
     {
-        lock (_lock) return _subs.Count == 0 ? IdleFps : Math.Min(MaxFps, _subs.Max(s => s.Fps));
+        lock (_lock) return _subs.Count == 0 ? IdleFps : _targetFps;
     }
 
     public void Start()
@@ -104,10 +112,14 @@ public sealed class CaptureLoop : IFrameSource, IAsyncDisposable
         var fpsClock = Stopwatch.StartNew();
         long frames = 0, framesAtMark = 0; double fps = 0;
         int blackRun = 0;
+        // Frames follow a schedule rather than "wait N ms after each one": timers tick in ~15.6 ms steps on Windows,
+        // so a fixed wait after every frame rounds each period up (asking for 20/s gave about 19/s, 30/s about 21/s).
+        // On a schedule a late frame shortens the next wait, so the average comes out at the rate asked for.
+        var clock = Stopwatch.StartNew();
+        double nextMs = 0;
 
         while (!ct.IsCancellationRequested)
         {
-            var tick = Stopwatch.StartNew();
             double delayMs = 1000;
             try
             {
@@ -136,7 +148,11 @@ public sealed class CaptureLoop : IFrameSource, IAsyncDisposable
                     }
                     else
                     {
-                        var gf = new GameFrame(frame, window, DateTimeOffset.Now);
+                        // Borderless fullscreen on a monitor of another shape: the game sits between black bars.
+                        // Readers measure from the game's corner, so cut the bars off here, once, for everyone.
+                        var content = ImageOps.Letterbox(frame);
+                        if (content != frame.Bounds) frame = frame.Crop(content);
+                        var gf = new GameFrame(frame, window, DateTimeOffset.Now, (content.X, content.Y));
                         _latest = gf;
                         frames++;
                         Publish(gf);
@@ -157,8 +173,16 @@ public sealed class CaptureLoop : IFrameSource, IAsyncDisposable
                 SetStatus(new(CaptureState.Error, "Capture failed: " + e.Message, null, 0, frames));
             }
 
-            int wait = (int)Math.Max(1, delayMs - tick.ElapsedMilliseconds);
-            try { await Task.Delay(wait, ct).ConfigureAwait(false); } catch (OperationCanceledException) { break; }
+            double now = clock.Elapsed.TotalMilliseconds;
+            nextMs += delayMs;
+            if (nextMs < now - delayMs) nextMs = now; // more than a frame behind (slow capture): don't catch up in a burst
+            int wait = (int)Math.Round(nextMs - now);
+            try
+            {
+                if (wait > 0) await Task.Delay(wait, ct).ConfigureAwait(false);
+                else await Task.Yield();
+            }
+            catch (OperationCanceledException) { break; }
         }
     }
 

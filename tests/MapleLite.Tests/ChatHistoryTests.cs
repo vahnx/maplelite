@@ -552,3 +552,20 @@ public class ChatHistoryPortTests
         Assert.Contains("size changed", pipeline.Error);
     }
 }
+
+[Collection("ChatParser")]
+public class MentionsTests
+{
+    static Entry E(string text) => new(DateTimeOffset.Now, "General", "", text);
+
+    [Fact]
+    public void Matches_other_players_mentioning_my_name()
+    {
+        var me = Mentions.Split("Froggy, AltChar");
+        Assert.True(Mentions.Of(E("Bob: hey froggy want to party?"), me));
+        Assert.True(Mentions.Of(E("Bob: buying from AltChar"), me));
+        Assert.False(Mentions.Of(E("Froggy: hello everyone"), me));
+        Assert.False(Mentions.Of(E("Bob: Froggyland is great"), me));
+        Assert.False(Mentions.Of(E("Bob: hi"), Mentions.Split("")));
+    }
+}

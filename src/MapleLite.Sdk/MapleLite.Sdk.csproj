@@ -7,6 +7,8 @@
   <ItemGroup>
     <ProjectReference Include="..\MapleLite.Core\MapleLite.Core.csproj" />
     <PackageReference Include="Avalonia" Version="$(AvaloniaVersion)" />
+    <!-- SkiaSharp for FrameFiles (PNG in/out). The host already ships it with Avalonia's renderer. -->
+    <PackageReference Include="Avalonia.Skia" Version="$(AvaloniaVersion)" />
     <!-- Shipped by the host (with its Fluent styles) so plugins can show tables without bundling it. -->
     <PackageReference Include="Avalonia.Controls.DataGrid" Version="$(AvaloniaDataGridVersion)" />
   </ItemGroup>

@@ -9,6 +9,8 @@ internal sealed class HostSettings
     public string ProcessName { get; set; } = "MapleStory";
     public int? ProcessId { get; set; }
     public double PreviewFps { get; set; } = 8;
+    /// <summary>Pictures a second the capture loop takes while plugins are listening (5–60).</summary>
+    public double CaptureFps { get; set; } = MapleLite.Core.Capture.CaptureLoop.DefaultFps;
     public List<string> DisabledPlugins { get; set; } = new();
     /// <summary>Overlays are off by default and not built yet. See docs/OVERLAYS.md.</summary>
     public bool OverlayEnabled { get; set; }

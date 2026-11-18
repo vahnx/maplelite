@@ -81,7 +81,7 @@ internal sealed class WindowsFinder : IGameWindowFinder, IWindowList, ICursor
                 try { using var p = Process.GetProcessById(pid); name = p.ProcessName; } catch { name = "?"; }
                 names[pid] = name;
             }
-            list.Add(new WindowCandidate(h, pid, name, title));
+            list.Add(new WindowCandidate(h, pid, name, title) { Minimized = Win32.IsIconic(h) });
         }
         return list;
     }

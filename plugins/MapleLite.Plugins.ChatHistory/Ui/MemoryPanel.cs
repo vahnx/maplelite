@@ -21,6 +21,7 @@ internal sealed class MemoryPanel : UserControl
     readonly Button _start;
     readonly TextBlock _status = Muted(""), _summary = Text(""), _rangeError = Text("", ThemeTokens.Danger, 12);
     readonly TextBox _search = new() { Watermark = "Search names, messages or events", MinWidth = 320 };
+    readonly TextBox _myNames = new() { Watermark = "Your character name", MinWidth = 200 };
     readonly WrapPanel _channels = new();
     readonly CalendarDatePicker _fromDate = new() { Width = 140, Watermark = "Any day" }, _toDate = new() { Width = 140, Watermark = "Any day" };
     readonly TextBox _fromTime = new() { Text = "00:00", Width = 80 }, _toTime = new() { Text = "23:59", Width = 80 };
@@ -50,6 +51,11 @@ internal sealed class MemoryPanel : UserControl
             _channels.Children.Add(b);
         }
         _search.TextChanged += (_, _) => Refresh(force: true);
+        _myNames.Text = _engine.Settings.MyNames;
+        _myNames.TextChanged += (_, _) => { _engine.Settings.MyNames = _myNames.Text ?? ""; _engine.SaveSettings(); Refresh(force: true); };
+        ToolTip.SetTip(_myNames, "Your character name. Separate several with commas.");
+        var mentionsRow = Wrap(Muted("My name"), _myNames,
+            Check("Only lines that mention me", _engine.Settings.OnlyMentions, v => { _engine.Settings.OnlyMentions = v; Refresh(force: true); }));
 
         foreach (var z in ClockZone.Choices())
         {
@@ -78,6 +84,7 @@ internal sealed class MemoryPanel : UserControl
         var options = Stack(6,
             Check("Skip similar repeats from the same sender (10 min)", _engine.Settings.SuppressSpam, v => _engine.Settings.SuppressSpam = v),
             Check("Hide trailing @@@@ filler in messages", _engine.Settings.StripTrailingAt, v => { _engine.Settings.StripTrailingAt = MessageParser.StripTrailingAt = v; Refresh(force: true); }),
+            Check("Show the whole chat line instead of splitting it into columns", _engine.Settings.ShowRawLine, v => { _engine.Settings.ShowRawLine = v; Refresh(force: true); }),
             Check("Show the in-game time instead of the observed time", _engine.Settings.ShowGameTime, v => { _engine.Settings.ShowGameTime = v; Refresh(force: true); }));
         var help = new Expander
         {
@@ -93,7 +100,7 @@ internal sealed class MemoryPanel : UserControl
         _grid = BuildGrid();
         var journalTab = new DockPanel();
         var settings = new Expander { Header = "Options", Content = Stack(10, zoneRow, options) };
-        var top = Stack(10, _channels, _search, range, _rangeError, Wrap(settings, help));
+        var top = Stack(10, _channels, _search, mentionsRow, range, _rangeError, Wrap(settings, help));
         top.Margin = new Thickness(0, 0, 0, 10);
         DockPanel.SetDock(top, Dock.Top);
         journalTab.Children.Add(top);
@@ -129,18 +136,11 @@ internal sealed class MemoryPanel : UserControl
         grid.Columns.Add(new DataGridTextColumn { Header = "Event", Binding = new Binding(nameof(Entry.Direction)), Width = DataGridLength.Auto });
         grid.Columns.Add(new DataGridTextColumn { Header = "Side", Binding = new Binding(nameof(Entry.Side)), Width = DataGridLength.Auto });
         grid.Columns.Add(new DataGridTextColumn { Header = "Item", Binding = new Binding(nameof(Entry.Item)), Width = DataGridLength.Auto });
-        grid.Columns.Add(new DataGridTemplateColumn
-        {
-            Header = "Message", Width = new DataGridLength(1, DataGridLengthUnitType.Star),
-            CellTemplate = new FuncDataTemplate<Entry>((_, _) => new TextBlock
-            {
-                [!TextBlock.TextProperty] = new Binding(nameof(Entry.Message)),
-                TextWrapping = TextWrapping.Wrap, Margin = new Thickness(6, 6), VerticalAlignment = VerticalAlignment.Center,
-            }),
-        });
+        grid.Columns.Add(WrappedColumn("Message", nameof(Entry.Message)));
+        grid.Columns.Add(WrappedColumn("Chat line", nameof(Entry.Text)));
 
         var copyMessage = new MenuItem { Header = "Copy message" };
-        copyMessage.Click += async (_, _) => { if (grid.SelectedItem is Entry e) await Copy(e.Message); };
+        copyMessage.Click += async (_, _) => { if (grid.SelectedItem is Entry e) await Copy(_engine.Settings.ShowRawLine ? e.Text : e.Message); };
         var copyRow = new MenuItem { Header = "Copy row" };
         copyRow.Click += async (_, _) =>
         {
@@ -149,6 +149,16 @@ internal sealed class MemoryPanel : UserControl
         grid.ContextMenu = new ContextMenu { ItemsSource = new[] { copyMessage, copyRow } };
         return grid;
     }
+
+    static DataGridTemplateColumn WrappedColumn(string header, string path) => new()
+    {
+        Header = header, Width = new DataGridLength(1, DataGridLengthUnitType.Star),
+        CellTemplate = new FuncDataTemplate<Entry>((_, _) => new TextBlock
+        {
+            [!TextBlock.TextProperty] = new Binding(path),
+            TextWrapping = TextWrapping.Wrap, Margin = new Thickness(6, 6), VerticalAlignment = VerticalAlignment.Center,
+        }),
+    };
 
     async Task Copy(string text)
     {
@@ -170,8 +180,10 @@ internal sealed class MemoryPanel : UserControl
     List<Entry> Filtered()
     {
         var q = _search.Text ?? "";
+        var names = _engine.Settings.OnlyMentions ? Mentions.Split(_engine.Settings.MyNames) : null;
         return _engine.Journal.Entries.Where(e => _rangeValid && _time.Matches(e.Time)
             && (_channel == "All" || e.Channel == _channel)
+            && (names == null || Mentions.Of(e, names))
             && (string.IsNullOrWhiteSpace(q) || e.Text.Contains(q, StringComparison.OrdinalIgnoreCase) || e.Direction.Contains(q, StringComparison.OrdinalIgnoreCase))).ToList();
     }
 
@@ -183,8 +195,12 @@ internal sealed class MemoryPanel : UserControl
         if (!force && count == _shownCount) return;
         _shownCount = count;
         _grid.Columns[0].Header = $"Observed ({ClockZone.Offset(ClockZone.Zone)})";
-        _grid.Columns[0].IsVisible = !_engine.Settings.ShowGameTime;
-        _grid.Columns[1].IsVisible = _engine.Settings.ShowGameTime;
+        bool raw = _engine.Settings.ShowRawLine;
+        // In whole-line mode the game time is already part of the line, so the observed time is the only extra column.
+        _grid.Columns[0].IsVisible = raw || !_engine.Settings.ShowGameTime;
+        _grid.Columns[1].IsVisible = !raw && _engine.Settings.ShowGameTime;
+        for (int i = 2; i <= 7; i++) _grid.Columns[i].IsVisible = !raw;
+        _grid.Columns[8].IsVisible = raw;
         var rows = Filtered();
         _grid.ItemsSource = rows.AsEnumerable().Reverse().Take(MaxRows).ToList();
         var all = _engine.Journal.Entries;

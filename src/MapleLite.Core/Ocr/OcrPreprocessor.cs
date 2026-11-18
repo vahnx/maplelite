@@ -14,6 +14,51 @@ public sealed class OcrPreprocessor(string key, Func<Frame, Frame> apply)
 
     public static readonly OcrPreprocessor None = new("none", f => f);
 
+    /// <summary>
+    /// Thin dark lettering (the game's pickup notices over a light scene draw as 1-pixel dark strokes): pixels darker
+    /// than <paramref name="level"/> become black on white, then strokes are made <paramref name="bold"/> pixels wider
+    /// to the right, which OCR reads far better than hairlines.
+    /// </summary>
+    public static OcrPreprocessor DarkStrokes(int level, int bold = 1) => new($"strokes:{level}:{bold}", f =>
+    {
+        int w = f.W, h = f.H;
+        var o = new Frame(w, h);
+        Array.Fill(o.Px, Pixel.White);
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                if (Pixel.Max(f.Px[y * w + x]) < level)
+                    for (int k = 0; k <= bold && x + k < w; k++) o.Px[y * w + x + k] = Pixel.Black;
+        return o;
+    });
+
+    /// <summary>
+    /// Outlined lettering (white letters with a black outline, like the game's pickup notices) picked out of any
+    /// scene: near-white pixels (every channel at least <paramref name="light"/>) with a near-black pixel (brightest
+    /// channel under <paramref name="dark"/>) within <paramref name="reach"/> pixels become black on white. Scenery
+    /// rarely puts pure white right beside pure black, so busy backgrounds drop out. Over a scene as light as the
+    /// letters the fill can't be told apart; <see cref="DarkStrokes"/> reads the outline there instead.
+    /// </summary>
+    public static OcrPreprocessor OutlinedFill(int dark = 70, int light = 200, int reach = 2) => new($"fill:{dark}:{light}:{reach}", f =>
+    {
+        int w = f.W, h = f.H;
+        var isDark = new bool[w * h];
+        for (int i = 0; i < isDark.Length; i++) isDark[i] = Pixel.Max(f.Px[i]) < dark;
+        var o = new Frame(w, h);
+        Array.Fill(o.Px, Pixel.White);
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                int p = f.Px[y * w + x];
+                if (Math.Min((p >> 16) & 255, Math.Min((p >> 8) & 255, p & 255)) < light) continue;
+                bool near = false;
+                for (int yy = Math.Max(0, y - reach); yy <= Math.Min(h - 1, y + reach) && !near; yy++)
+                    for (int xx = Math.Max(0, x - reach); xx <= Math.Min(w - 1, x + reach) && !near; xx++)
+                        near = isDark[yy * w + xx];
+                if (near) o.Px[y * w + x] = Pixel.Black;
+            }
+        return o;
+    });
+
     /// <summary>Dark text on light, from light text on dark.</summary>
     public static readonly OcrPreprocessor Invert = new("invert", f => ImageOps.Map(f, p => (~p & 0x00ffffff) | Pixel.Black));
 
@@ -25,6 +70,12 @@ public sealed class OcrPreprocessor(string key, Func<Frame, Frame> apply)
 
     /// <summary>Pixels whose brightest channel reaches <paramref name="level"/> become black text on white.</summary>
     public static OcrPreprocessor BrightText(int level) => new($"bright:{level}", f => ImageOps.Map(f, p => Pixel.Max(p) >= level ? Pixel.Black : Pixel.White));
+
+    /// <summary>
+    /// The opposite: pixels whose brightest channel stays below <paramref name="level"/> become black on white.
+    /// For faint grey lettering on a pale panel (greyed-out, disabled or sold entries), which reads poorly as is.
+    /// </summary>
+    public static OcrPreprocessor DarkText(int level) => new($"dark:{level}", f => ImageOps.Map(f, p => Pixel.Max(p) < level ? Pixel.Black : Pixel.White));
 
     /// <summary>
     /// The game's chat box: a translucent panel that dims the world behind it while the letters stay bright.

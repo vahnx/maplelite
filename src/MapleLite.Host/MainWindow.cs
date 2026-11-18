@@ -35,7 +35,7 @@ internal sealed class MainWindow : Window
 
         var brand = Ui.Stack(2,
             Ui.Text("MapleLite", ThemeTokens.Accent, 20, FontWeight.Bold),
-            Ui.Muted("Companion for MapleStory Classic World"));
+            Ui.Muted(""));
         brand.Margin = new Thickness(16, 18, 16, 14);
 
         _toast = Ui.Muted("");
@@ -82,7 +82,7 @@ internal sealed class MainWindow : Window
     }
 
     /// <summary>Test switch: render the window to a PNG once the page has had time to fill, then quit.</summary>
-    public void SnapshotAndExit(string path, Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
+    public void SnapshotAndExit(string path, Action quit)
     {
         var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(Options.SnapshotWait) };
         timer.Tick += (_, _) =>
@@ -94,7 +94,7 @@ internal sealed class MainWindow : Window
                 bmp.Render(this);
                 bmp.Save(path);
             }
-            desktop.Shutdown();
+            quit(); // the normal way out, so plugins save as they would when the user closes the window
         };
         timer.Start();
     }

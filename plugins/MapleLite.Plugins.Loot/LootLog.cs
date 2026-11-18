@@ -1,16 +1,21 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using MapleLite.Core.Game;
+using MapleLite.Sdk;
 
 namespace MapleLite.Plugins.Loot;
 
 /// <summary>One pickup. Source says where it was seen: "OCR · notice" (the pickup notices) or "chat".</summary>
 public sealed record LootRecord(DateTimeOffset Time, string Kind, string Name, long Quantity, string Text, string Source)
 {
+    /// <summary>The map the pickup happened on, read from the minimap; null when it wasn't known (older records).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Map { get; init; }
+
     [JsonIgnore] public LootDrop Drop => new(Kind, Name, Quantity);
     [JsonIgnore] public string When => Time.ToLocalTime().ToString("MMM dd  HH:mm:ss");
 
-    public static LootRecord From(DateTimeOffset time, LootDrop d, string text, string source) => new(time, d.Kind, d.Name, d.Quantity, text, source);
+    public static LootRecord From(DateTimeOffset time, LootDrop d, string text, string source, string? map = null) =>
+        new(time, d.Kind, d.Name, d.Quantity, text, source) { Map = map };
 }
 
 public sealed class LootSettings
@@ -19,7 +24,10 @@ public sealed class LootSettings
     public bool ImportChecked { get; set; }
 }
 
-/// <summary>The pickup log: monthly loot-YYYY-MM.jsonl files, one record per line, in the plugin's data folder.</summary>
+/// <summary>
+/// The pickup log: one loot-YYYY-MM-DD.jsonl file per day, one record per line, in the plugin's data folder.
+/// Older monthly files are split into days the first time the log opens.
+/// </summary>
 public sealed class LootLog
 {
     public string Folder { get; }
@@ -30,6 +38,7 @@ public sealed class LootLog
     {
         Folder = folder;
         Directory.CreateDirectory(folder);
+        DailyFiles.SplitMonthly(folder, Prefix, Ext, TimeOf);
         foreach (var path in Directory.EnumerateFiles(folder, "loot-*.jsonl").Order())
             foreach (var line in File.ReadLines(path))
             {
@@ -40,9 +49,17 @@ public sealed class LootLog
         Records.Sort((a, b) => a.Time.CompareTo(b.Time));
     }
 
+    const string Prefix = "loot-", Ext = ".jsonl";
+
+    static DateTimeOffset? TimeOf(string line)
+    {
+        try { return JsonSerializer.Deserialize<LootRecord>(line)?.Time; }
+        catch (JsonException) { return null; }
+    }
+
     public void Add(LootRecord r)
     {
-        File.AppendAllText(Path.Combine(Folder, $"loot-{r.Time:yyyy-MM}.jsonl"), JsonSerializer.Serialize(r) + Environment.NewLine);
+        File.AppendAllText(DailyFiles.PathFor(Folder, Prefix, Ext, r.Time), JsonSerializer.Serialize(r) + Environment.NewLine);
         Records.Add(r);
     }
 

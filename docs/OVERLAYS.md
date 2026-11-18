@@ -1,6 +1,6 @@
 # Overlays: drawing on top of the game
 
-**Status: not built. Off by default. Nothing here ships until you decide.**
+**Status: built for Windows (windowed and borderless). Off by default: Settings → Overlay. Respawn Timer is the first plugin to draw on it.**
 
 MapleLite shows everything in its own window first. This document covers how an overlay could
 work with the least risk, given that MapleStory runs anti-cheat and can run windowed, borderless or in
@@ -29,9 +29,10 @@ exclusive fullscreen.
    A global hotkey (registered by MapleLite, never sent to the game) hides it instantly.
 4. **No gameplay automation cues.** The hub review rejects overlays that act as bots-by-proxy
    (e.g. "press now" timers for skills). Information overlays only: prices, chat highlights, EXP rate.
-5. **Not in our own captures.** On Windows the overlay uses `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`
-   so screenshots/OCR never read MapleLite's own drawings. (Window capture of the game already excludes
-   other windows; this also covers the monitor-capture fallback.)
+5. **Not in our own captures.** Window capture of the game reads only the game window's own picture, so
+   MapleLite's OCR never sees the overlay. The overlay is *not* marked `WDA_EXCLUDEFROMCAPTURE`: with that
+   set it didn't show on screen in live testing. The monitor-capture fallback only happens in exclusive
+   fullscreen, where the overlay is off. Screen recorders (OBS display capture) will show it.
 
 ## Window modes
 

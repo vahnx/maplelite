@@ -1,3 +1,4 @@
+using MapleLite.Sdk;
 using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls;
@@ -25,6 +26,10 @@ internal sealed class GamePage : UserControl
     readonly ComboBox _windows = new() { MinWidth = 360, PlaceholderText = "Pick a window to follow" };
     readonly TextBox _processName = new() { Width = 180 };
     readonly TextBox _ocrOut = new() { IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap, FontFamily = new FontFamily("Consolas,Menlo,DejaVu Sans Mono,monospace"), MinHeight = 120, MaxHeight = 320 };
+    readonly ComboBox _recRate = new() { MinWidth = 150 };
+    readonly Button _recButton;
+    readonly TextBlock _recStatus = Ui.Muted("Not recording.");
+    readonly DispatcherTimer _recTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     WriteableBitmap? _bitmap;
     IDisposable? _sub;
     volatile GameFrame? _pending;
@@ -58,11 +63,24 @@ internal sealed class GamePage : UserControl
             Ui.Row(8, Ui.Button("Read text in the game picture", ReadText), Ui.Button("Save picture…", SavePicture)),
             _ocrOut));
 
+        foreach (var r in SessionRecorder.Rates) _recRate.Items.Add(new ComboBoxItem { Content = $"{r:0} pictures/s", Tag = r });
+        _recRate.SelectedIndex = Array.IndexOf(SessionRecorder.Rates, SessionRecorder.DefaultFps);
+        _recButton = Ui.Button("Start recording", ToggleRecording);
+        var recordCard = Ui.Card(Ui.Stack(10,
+            Ui.Subheading("Record a session"),
+            Ui.Muted("Saves the game picture, losslessly and with timings, so it can be replayed through MapleLite later "
+                + "(run with --replay <folder>) to test and tune the readers. Only the game window is recorded. "
+                + "A 1080p picture is about 1–2 MB, so 5 minutes at 5/s needs roughly 1–3 GB; unchanged pictures aren't saved twice."),
+            Ui.Row(8, _recRate, _recButton, Ui.Button("Open recordings folder", () => OpenFolder(SessionRecorder.RecordingsFolder))),
+            _recStatus));
+        _recTimer.Tick += (_, _) => ShowRecording();
+
         var statusRow = Ui.Row(10, _dot, _state);
         var content = Ui.Stack(18,
             Ui.Heading("Game"),
             Ui.Card(Ui.Stack(14, statusRow, facts, notes)),
             Ui.Card(new Border { Child = _preview, MinHeight = 200 }.Res(Border.BackgroundProperty, ThemeTokens.Background), 8),
+            recordCard,
             ocrCard,
             Ui.Card(target));
         Content = Ui.Page(content);
@@ -73,9 +91,12 @@ internal sealed class GamePage : UserControl
             _sub = _shell.Capture.Subscribe(f => { if (Interlocked.Exchange(ref _pending, f) == null) Dispatcher.UIThread.Post(Draw, DispatcherPriority.Background); }, _shell.Settings.PreviewFps);
             OnStatus(_shell.Capture.Status);
             if (_windows.ItemCount == 0) LoadWindows();
+            ShowRecording();
+            if (_shell.Recorder.Active) _recTimer.Start();
         };
         DetachedFromVisualTree += (_, _) =>
         {
+            _recTimer.Stop(); // recording itself carries on while other pages are open
             _shell.Capture.StatusChanged -= OnStatus;
             _sub?.Dispose(); _sub = null;
         };
@@ -98,7 +119,7 @@ internal sealed class GamePage : UserControl
         _mode.Text = w == null ? "–" : CaptureLoop.ModeText(w.Mode) + (w.Mode == WindowMode.ExclusiveFullscreen ? " — borderless works better" : "");
         _size.Text = w == null ? "–" : $"{w.Client.Width} × {w.Client.Height} at {w.Client.X},{w.Client.Y}";
         _scale.Text = w == null ? "–" : $"{w.Scale * 100:0}%";
-        _fps.Text = s.State == CaptureState.Capturing ? $"{s.Fps:0.0} frames/s ({s.Frames} total)" : "–";
+        _fps.Text = s.State == CaptureState.Capturing ? $"{s.Fps:0.0} frames/s of {_shell.Capture.TargetFps:0} set ({s.Frames} total)" : "–";
         var st = _shell.Ocr.Stats;
         _ocr.Text = _shell.Ocr.Available ? $"{_shell.Ocr.EngineName} · {st.Reads} reads, {st.CacheHits} shared, avg {st.AverageMs:0} ms" : "No text reader on this system";
     });
@@ -118,6 +139,47 @@ internal sealed class GamePage : UserControl
             for (int y = 0; y < f.H; y++) Marshal.Copy(f.Px, y * f.W, fb.Address + y * fb.RowBytes, f.W);
         }
         _preview.InvalidateVisual();
+    }
+
+    async void ToggleRecording()
+    {
+        var rec = _shell.Recorder;
+        if (rec.Active)
+        {
+            _recButton.IsEnabled = false;
+            _recStatus.Text = "Saving the last pictures…";
+            var w = rec.Current!;
+            var folder = await rec.StopAsync();
+            _recTimer.Stop();
+            _recButton.IsEnabled = true;
+            ShowRecording();
+            _recStatus.Text = $"Saved {w.Frames} pictures ({w.Elapsed:m\\:ss}, {w.Bytes / 1048576.0:0} MB{(w.Dropped > 0 ? $", {w.Dropped} dropped" : "")}) to {folder}";
+            _shell.Notify("Recording saved: " + System.IO.Path.GetFileName(folder));
+            return;
+        }
+        if (_shell.Capture.Status.State != CaptureState.Capturing) { _recStatus.Text = "MapleLite isn't capturing the game yet, so there's nothing to record."; return; }
+        try
+        {
+            rec.Start(_recRate.SelectedItem is ComboBoxItem { Tag: double fps } ? fps : SessionRecorder.DefaultFps);
+            _recTimer.Start();
+            ShowRecording();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { _recStatus.Text = "Couldn't start recording: " + e.Message; }
+    }
+
+    void ShowRecording()
+    {
+        var w = _shell.Recorder.Current;
+        _recButton.Content = w == null ? "Start recording" : "Stop recording";
+        _recRate.IsEnabled = w == null;
+        if (w != null)
+            _recStatus.Text = $"● Recording {w.Elapsed:m\\:ss} · {w.Frames} pictures · {w.Bytes / 1048576.0:0} MB{(w.Dropped > 0 ? $" · {w.Dropped} dropped (can't keep up; try a lower rate)" : "")}";
+    }
+
+    static void OpenFolder(string path)
+    {
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true }); }
+        catch (Exception) { /* no file manager: nothing to do */ }
     }
 
     void LoadWindows()
@@ -152,7 +214,7 @@ internal sealed class GamePage : UserControl
         });
         if (file?.TryGetLocalPath() is { } path)
         {
-            FrameIo.SavePng(gf.Frame, path);
+            FrameFiles.SavePng(gf.Frame, path);
             _shell.Notify("Saved " + System.IO.Path.GetFileName(path));
         }
     }

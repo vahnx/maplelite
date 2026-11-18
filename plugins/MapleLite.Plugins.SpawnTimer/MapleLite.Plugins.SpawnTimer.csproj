@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- A plugin compiles against Core + Sdk + Avalonia only. The host supplies those at run time. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>MapleLite.Plugins.SpawnTimer</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\MapleLite.Sdk\MapleLite.Sdk.csproj" Private="false" />
+    <PackageReference Include="Avalonia" Version="$(AvaloniaVersion)" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="MapleLite.Tests" />
+  </ItemGroup>
+</Project>

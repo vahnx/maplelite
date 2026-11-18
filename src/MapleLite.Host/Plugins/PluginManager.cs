@@ -5,7 +5,10 @@ using System.Text.Json;
 using Avalonia.Threading;
 using MapleLite.Core;
 using MapleLite.Core.Capture;
+using MapleLite.Core.Game;
+using MapleLite.Core.Imaging;
 using MapleLite.Core.Ocr;
+using MapleLite.Core.Platform;
 using MapleLite.Sdk;
 using MapleLite.Sdk.Theming;
 
@@ -104,9 +107,15 @@ internal sealed class PluginManager(Shell shell)
 
     public bool IsEnabled(PluginEntry e) => !shell.Settings.DisabledPlugins.Contains(e.Manifest.Id);
 
-    public async Task StartEnabledAsync()
+    /// <summary>Starts every enabled plugin, one at a time. <paramref name="starting"/> hears (plugin, index, count) before each.</summary>
+    public async Task StartEnabledAsync(Func<PluginEntry, int, int, Task>? starting = null)
     {
-        foreach (var e in _entries.Where(IsEnabled)) await StartAsync(e);
+        var list = _entries.Where(IsEnabled).ToList();
+        for (int i = 0; i < list.Count; i++)
+        {
+            if (starting != null) await starting(list[i], i, list.Count);
+            await StartAsync(list[i]);
+        }
         Changed?.Invoke();
     }
 
@@ -117,9 +126,11 @@ internal sealed class PluginManager(Shell shell)
         try
         {
             var instance = (IPlugin)Activator.CreateInstance(e.Type)!;
-            var ctx = new PluginContext(e.Manifest, shell);
+            var ctx = new PluginContext(e.Manifest, shell, e.Folder);
             e.Instance = instance; e.Context = ctx; e.Generation++;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             await instance.StartAsync(ctx);
+            shell.Log($"[{e.Manifest.Id}] started in {sw.ElapsedMilliseconds} ms");
         }
         catch (Exception ex)
         {
@@ -128,13 +139,19 @@ internal sealed class PluginManager(Shell shell)
         }
     }
 
-    async Task StopAsync(PluginEntry e)
+    /// <summary>Stops a plugin, giving it <paramref name="timeout"/> (default 5 s) to save. Returns what went wrong, or null.</summary>
+    async Task<string?> StopAsync(PluginEntry e, TimeSpan? timeout = null)
     {
-        if (!e.Running) return;
-        try { await e.Instance!.StopAsync().WaitAsync(TimeSpan.FromSeconds(5)); }
-        catch (Exception ex) { shell.Log($"[{e.Manifest.Id}] stop failed: {ex.Message}"); }
+        if (!e.Running) return null;
+        var limit = timeout ?? TimeSpan.FromSeconds(5);
+        string? problem = null;
+        try { await e.Instance!.StopAsync().WaitAsync(limit); }
+        catch (TimeoutException) { problem = $"didn't finish within {limit.TotalSeconds:0} s, so it was skipped"; }
+        catch (Exception ex) { problem = "failed: " + ex.Message; }
+        if (problem != null) shell.Log($"[{e.Manifest.Id}] stop {problem}");
         e.Context?.Close();
         e.Instance = null; e.Context = null;
+        return problem;
     }
 
     /// <summary>Switches a plugin on or off now, and remembers the choice.</summary>
@@ -224,9 +241,20 @@ internal sealed class PluginManager(Shell shell)
         return message;
     }
 
-    public async Task StopAllAsync()
+    /// <summary>
+    /// Stops every running plugin so each can save. <paramref name="stopping"/> hears (plugin, index, count) before
+    /// each; <paramref name="stopped"/> hears how long it took and what went wrong, if anything.
+    /// </summary>
+    public async Task StopAllAsync(Func<PluginEntry, int, int, Task>? stopping = null, Action<PluginEntry, TimeSpan, string?>? stopped = null, TimeSpan? timeout = null)
     {
-        foreach (var e in _entries) await StopAsync(e);
+        var list = _entries.Where(e => e.Running).ToList();
+        for (int i = 0; i < list.Count; i++)
+        {
+            if (stopping != null) await stopping(list[i], i, list.Count);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var problem = await StopAsync(list[i], timeout);
+            stopped?.Invoke(list[i], sw.Elapsed, problem);
+        }
     }
 }
 
@@ -276,9 +304,10 @@ internal sealed class PluginContext : IPluginContext
     readonly TrackedEvents _events;
     bool _closed;
 
-    public PluginContext(PluginManifest manifest, Shell shell)
+    public PluginContext(PluginManifest manifest, Shell shell, string folder)
     {
-        Manifest = manifest; _shell = shell;
+        Manifest = manifest; _shell = shell; PluginFolder = folder;
+        OtherWindows = new WindowPictures(shell.Platform);
         Storage = new PluginStorage(AppPaths.PluginData(manifest.Id));
         _frames = new TrackedFrames(shell.Capture, Track);
         _events = new TrackedEvents(shell.Events, Track);
@@ -287,12 +316,31 @@ internal sealed class PluginContext : IPluginContext
     public PluginManifest Manifest { get; }
     public IOcr Ocr => _shell.Ocr;
     public IFrameSource Frames => _frames;
+    public MapleLite.Core.Game.IMapSource Map => _shell.Map;
     public IPluginStorage Storage { get; }
     public IThemeService Themes => _shell.Themes;
     public IEventBus Events => _events;
+    public ItemCatalog Items => _shell.Items;
 
-    public (int X, int Y)? CursorInGame() =>
-        _shell.Capture.Status.Window is { } w ? _shell.Platform.Cursor.PositionIn(w) : null;
+    public (int X, int Y)? CursorInGame()
+    {
+        if (_shell.Capture.Status.Window is not { } w || _shell.Platform.Cursor.PositionIn(w) is not { } p) return null;
+        // frames have letterbox bars cut off: measure from the same corner they do
+        var off = _shell.Capture.Latest?.Offset ?? default;
+        return (p.X - off.X, p.Y - off.Y);
+    }
+
+    public string PluginFolder { get; }
+    public IOtherWindows OtherWindows { get; }
+    PluginOverlay? _overlay;
+    public IOverlay Overlay => _overlay ??= new PluginOverlay(_shell.Overlay, Manifest.Id);
+
+    public async Task<bool> CopyImageAsync(Frame image)
+    {
+        if (_shell.Platform.Clipboard is not { } clip) return false;
+        await clip.SetImageAsync(image, FrameFiles.EncodePng(image, opaque: false));
+        return true;
+    }
 
     public void Notify(string message) { if (!_closed) _shell.Notify($"{Manifest.Name}: {message}"); }
     public void Log(string message) => _shell.Log($"[{Manifest.Id}] {message}");
@@ -313,9 +361,26 @@ internal sealed class PluginContext : IPluginContext
         IDisposable[] all;
         lock (_tracked) { _closed = true; all = _tracked.ToArray(); _tracked.Clear(); }
         foreach (var d in all) { try { d.Dispose(); } catch { } }
+        _overlay?.Close();
     }
 
     sealed class Callback(Action a) : IDisposable { public void Dispose() => a(); }
+
+    sealed class WindowPictures(IPlatform platform) : IOtherWindows
+    {
+        public IReadOnlyList<WindowCandidate> List()
+        {
+            try { return platform.Windows.TopLevelWindows(); }
+            catch (Exception) { return []; }
+        }
+
+        public async Task<Frame?> CaptureAsync(nint handle, CancellationToken ct = default)
+        {
+            try { return await platform.Capture.CaptureWindowAsync(handle, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception) { return null; }
+        }
+    }
 
     sealed class TrackedFrames(IFrameSource inner, Func<IDisposable, IDisposable> track) : IFrameSource
     {

@@ -21,5 +21,11 @@ public interface IEventBus
 /// <param name="Text">The line as read, including any "[HH:mm]" timestamp.</param>
 public sealed record ChatMessageEvent(DateTimeOffset Time, string Channel, string Text, string Source, string PublisherId);
 
+/// <summary>
+/// EXP went up (usually a kill). XP Tracker publishes one per rise it sees on the status bar; several kills within
+/// one reading (about 0.2 s) arrive as one event.
+/// </summary>
+public sealed record ExpGainedEvent(DateTimeOffset Time, long Amount, long Exp, double Percent, string PublisherId);
+
 /// <summary>Where the chat box is in the game picture. Chat History publishes it when it finds or you select it.</summary>
 public sealed record ChatAreaEvent(Region Area, int FrameWidth, int FrameHeight, string PublisherId);

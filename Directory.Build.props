@@ -9,7 +9,9 @@
     <AvaloniaDataGridVersion>11.3.13</AvaloniaDataGridVersion>
     <Company>CheesyFrog Technologies</Company>
     <Product>MapleLite</Product>
-    <Version>0.1.0</Version>
+    <Version>0.1.0-alpha</Version>
+    <!-- Lets macOS and Linux restore and build the whole solution, Windows projects included. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>
   <!--
     Build output (bin/obj) goes outside the source folder: this folder is synced by Google Drive, which

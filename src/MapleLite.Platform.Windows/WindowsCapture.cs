@@ -148,6 +148,11 @@ internal sealed class WgcSession : IDisposable
                 _arrived = signal;
                 Direct3D11CaptureFrame? stale = null;
                 while (_pool!.TryGetNextFrame() is { } waiting) { stale?.Dispose(); stale = waiting; }
+                // A picture drawn in the last 20 ms is current enough; waiting for the next one would cap the
+                // capture rate below the game's (SystemRelativeTime is on the same clock as Stopwatch: QPC).
+                if (stale != null && Now() - stale.SystemRelativeTime < TimeSpan.FromMilliseconds(20)
+                    && stale.ContentSize.Width == _size.Width && stale.ContentSize.Height == _size.Height)
+                { captured = stale; break; }
                 bool fresh = await Task.WhenAny(signal.Task, Task.Delay(stale == null ? 4000 : 400, ct)).ConfigureAwait(false) == signal.Task;
                 ct.ThrowIfCancellationRequested();
                 captured = fresh ? _pool.TryGetNextFrame() : null;
@@ -171,6 +176,8 @@ internal sealed class WgcSession : IDisposable
         }
         finally { _arrived = null; _gate.Release(); }
     }
+
+    static TimeSpan Now() => TimeSpan.FromSeconds(System.Diagnostics.Stopwatch.GetTimestamp() / (double)System.Diagnostics.Stopwatch.Frequency);
 
     public void Dispose() { Close(); _gate.Dispose(); }
 }

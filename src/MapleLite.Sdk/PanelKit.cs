@@ -57,6 +57,20 @@ public static class PanelKit
         return bmp;
     }
 
+    /// <summary>Opens a web page in the user's default browser. Only http and https links are opened.</summary>
+    public static bool OpenUrl(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var u) || (u.Scheme != Uri.UriSchemeHttps && u.Scheme != Uri.UriSchemeHttp)) return false;
+        try
+        {
+            if (OperatingSystem.IsWindows()) System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(u.AbsoluteUri) { UseShellExecute = true });
+            else if (OperatingSystem.IsMacOS()) System.Diagnostics.Process.Start("open", u.AbsoluteUri);
+            else System.Diagnostics.Process.Start("xdg-open", u.AbsoluteUri);
+            return true;
+        }
+        catch (Exception) { return false; }
+    }
+
     /// <summary>Opens a folder in the OS file manager (Explorer, Finder, or the Linux default).</summary>
     public static bool OpenFolder(string folder)
     {

@@ -6,6 +6,16 @@ and Linux** from one codebase (.NET 8 + Avalonia).
 MapleLite is **passive**. It reads the game only from pictures of its window. It never injects code,
 reads game memory, captures packets, or sends input to the game, and neither can its plugins.
 
+> [!WARNING]
+> **MapleLite is alpha software (0.1.0-alpha).** Expect bugs, missing features and changes between versions,
+> including to saved data.
+>
+> **Plugins read the game with OCR (text recognition on screenshots), so what they show can be wrong.** A misread
+> name, price, quantity or number leads to wrong totals, rates and logs. Check anything that matters, such as a price
+> before you trade, against the game itself.
+
+![MapleLite: the plugin menu and the Shop Card's design options](docs/screenshots/menu-and-customisation.png)
+
 ## Projects
 
 | Project | What it is |
@@ -13,10 +23,10 @@ reads game memory, captures packets, or sends input to the game, and neither can
 | `src/MapleLite.Core` | No UI, no OS calls. Frames, the **shared OCR service**, the capture loop, platform interfaces. |
 | `src/MapleLite.Sdk` | The plugin API (`IPlugin`, `IPluginContext`), theme tokens, themed panel helpers. Plugins reference only this. |
 | `src/MapleLite.Platform.Windows` | Window finding + mode detection, Windows.Graphics.Capture, Windows OCR. |
-| `src/MapleLite.Platform.Mac` | macOS (milestone 5): ScreenCaptureKit, Apple Vision OCR. Stub today. |
+| `src/MapleLite.Platform.Mac` | macOS: window finding, ScreenCaptureKit capture, Apple Vision OCR, clipboard. Not yet run against the native client. |
 | `src/MapleLite.Platform.Linux` | Linux (milestone 5): X11/XComposite for the Wine/Proton window, Tesseract OCR. Stub today. |
 | `src/MapleLite.Host` | The Avalonia app: Game page, plugin pages, Settings, themes, plugin loader. |
-| `plugins/*` | Bundled plugins: Chat History (the MapleMemory app, ported), Loot, Sale Card, XP Tracker. |
+| `plugins/*` | Bundled plugins: Chat History (the MapleMemory app, ported), Loot, Shop Card, XP Tracker, Respawn Timer. |
 | `samples/HelloPlugin` | A minimal third-party plugin to copy. |
 | `tests/MapleLite.Tests` | xUnit tests on fake engines and synthetic frames (never the live game). |
 
@@ -53,7 +63,28 @@ the tokens too, so the host and every plugin page restyle live. Users add themes
 Not built, off by default. See [docs/OVERLAYS.md](docs/OVERLAYS.md) for the safety rules (never inside the game
 process, display-only and click-through, unavailable in exclusive fullscreen) and the decisions still open.
 
-## Build and run
+## Download or build in one step
+
+**Just want to run it?** Download the zip for your system from the
+[Releases](../../releases) page, unzip it and run `MapleLite.exe` (Windows) or `MapleLite` (macOS, Linux).
+Nothing else needs to be installed.
+
+**Want to build it yourself?** Download or clone this repo and run the script for your system. Each one makes a
+standalone copy in `bin/` that runs without .NET installed, plus a zip of it to share. If the
+[.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) isn't installed, the script offers to install it.
+
+| System | Run | Result |
+| --- | --- | --- |
+| Windows 10/11, 64-bit | double-click `build-windows.cmd` | `bin\MapleLite-windows-x64\MapleLite.exe` and `.zip` |
+| macOS (Apple silicon or Intel) | double-click `build-macos.command` | `bin/MapleLite-macos-arm64/MapleLite` and `.zip` |
+| Debian / Ubuntu | `./build.sh` in a terminal | `bin/MapleLite-linux-x64/MapleLite` and `.tar.gz` |
+
+The CPU is picked automatically (`macos-x64` on an Intel Mac, `linux-arm64` on ARM Linux); `./build.sh --rid <rid>`
+builds for another one. On macOS, if Finder won't open `build-macos.command`, right-click it and choose **Open**.
+Builds are about 130 MB (50 MB zipped), plugins included. `bin/` is ignored by git, so to publish a version, attach
+the zips to a GitHub Release instead of committing them.
+
+## Build and run (for development)
 
 You need the free [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) (Windows, macOS or Linux) and this repo.
 Run the commands in a terminal in the repo folder.
@@ -115,19 +146,31 @@ Run it with `./publish/mac/MapleLite`. If the folder was built on Windows and co
 blocked by Gatekeeper until you run `xattr -dr com.apple.quarantine publish/mac`, because it isn't signed yet.
 A proper double-clickable, signed `MapleLite.app` comes with the macOS milestone.
 
-**Status on macOS:** the window, themes, plugins and Settings all run, but the macOS capture and OCR layer isn't built
-yet (milestone 5), so it can't see the game. To try everything with a saved screenshot:
-`./publish/mac/MapleLite --replay path/to/capture.png` (OCR needs the macOS layer, so text reading stays off).
+**Status on macOS:** the macOS layer is written (window finding with CGWindowList, ScreenCaptureKit capture with a
+CGWindowListCreateImage fallback before macOS 12.3, Apple Vision OCR, PNG clipboard) but hasn't been run against the
+native client yet. On the first capture macOS asks for **Screen Recording** permission (System Settings > Privacy &
+Security > Screen Recording). When MapleLite is started from Terminal the permission belongs to Terminal; restart
+MapleLite after allowing it. Keep the game on the current Space and not minimized.
+
+Good first checks:
+
+- `./publish/mac/MapleLite --ocrtest capture.png --out lines.txt`: Vision OCR on a saved capture, no game needed.
+- Game page: the size shown should be the game's picture without the title bar. The title bar is found in the picture
+  (a flat gray band 20–40 points tall) and assumed to be 28 points until it has been seen.
+- Retina: capture is in physical pixels (2× the window's size in points). If plugins misread because the game draws at
+  1× and macOS enlarges it, that's the place to look.
 
 ### Linux
 
-Same as macOS with `-r linux-x64`; same status (the Linux capture and OCR layer is milestone 5).
+Build as on macOS with `-r linux-x64`. The Linux capture and OCR layer (X11 + Tesseract) is still milestone 5, so it
+can't see the game yet.
 
 ### Test switches
 
 Run the built `MapleLite` executable with these. None of them touch the live game:
 
 - `--replay <png>`: run the whole host on a saved capture instead of the game
+- `--replay <folder> [--loop]`: play back a session recorded with **Record a session** on the Game page (saved under `recordings/` in MapleLite's data folder), in real time, through every plugin
 - `--ocrtest <png> --out <txt> [--region x,y,w,h]`: read a saved capture with the shared OCR and write the lines
   (with `--region`: chat-glyph cleanup, compared across enlarge modes)
 - `--snapshot <png> [--theme <id>] [--page game|settings|<plugin-id>] [--wait <s>]`: render the window to a PNG and exit
@@ -155,8 +198,11 @@ are the app's code, unchanged (the loot tracker is now the Loot plugin); its 99 
 from the host's capture loop and text from the shared OCR (chat-glyph cleanup, row grouping, bicubic enlarge), and
 the page is Avalonia, so it runs on every OS the host does.
 
-- Journal format is unchanged: `messages-YYYY-MM.jsonl` and `settings.json`, now in `plugins/chathistory/` under the
-  MapleLite data folder.
+![Chat History: channel filters, search, dates and the logged chat lines](docs/screenshots/chat-history.png)
+
+- Same line format as the app, one file per day: `messages-YYYY-MM-DD.jsonl`, plus `settings.json`, in
+  `plugins/chathistory/` under the MapleLite data folder. Older monthly files are split into days on first start
+  (the originals are kept in `monthly-backup/`).
 - On first start it **copies** the MapleMemory app's history and chat area from `%LOCALAPPDATA%\MapleMemory`
   (the app's files are never changed). "Import from MapleMemory app" copies any lines added since, without duplicates.
 - Checked against the app on a saved capture: the same three messages, channels (Megaphone, Buddy, Megaphone) and
@@ -165,14 +211,52 @@ the page is Avalonia, so it runs on every OS the host does.
 ## Loot
 
 Totals of the mesos and items you pick up, by session, day, week or all time, with a CSV export. Moved out of Chat History
-into its own plugin. Pickups come from two places:
+into its own plugin.
+
+![Loot: totals for the chosen dates, with every item's icon and the recent pickups](docs/screenshots/loot.png)
+
+Pickups come from two places:
 
 - the game's pickup notices in the lower-right of the picture, read by the Loot plugin with the shared OCR;
 - pickup lines printed in chat, which Chat History publishes on the event bus (when Chat History is on).
 
 Chat History also publishes where the chat box is, and Loot leaves that area out of its own reads so the same pickup
-isn't counted twice. Pickups are saved as `loot-YYYY-MM.jsonl` in `plugins/loot/`. First start copies the pickups out
-of the MapleMemory app's history.
+isn't counted twice. Pickups are saved one file per day, as `loot-YYYY-MM-DD.jsonl` in `plugins/loot/`. First start
+copies the pickups out of the MapleMemory app's history.
+
+## XP Tracker
+
+EXP per hour, kills, time to the next level and HP/MP, read from the status bar, plus past sessions and every EXP gain
+by map and time (saved one file per day in `plugins/xptracker/gains/`).
+
+![XP Tracker: EXP per hour, kills, level progress and time to the next level](docs/screenshots/xp-tracker.png)
+
+## Shop Card
+
+![Shop Card: your items with going rates on the left, the shareable card on the right](docs/screenshots/shop-card.png)
+
+Use **Selling**, **Buying**, **Design** and **Settings** to switch pages while keeping the card preview visible.
+**Selling** lists what MapleLite read from your inventory, storage and own shop (tagged SALE on the card), with the
+**Kinds of item on the card** group controls. **Buying** searches every item in the game: tick what you want and it
+goes on the card tagged BUYING, with your quantity and price. The ▾ button on a Buying row says what you want: pick a
+stat, a value and "or more" / "exactly" / "or less" and press Add (or type your own lines, like "Clean (no scrolls
+used)"), and for equipment the fewest upgrade slots you'd take. The card lists them under "Wants:". On both lists, the going rate shows as small buttons under the item (one per
+source, plus **Average** when there are several); click one to put that figure in the price box. The **Prices** slider above the card raises
+or lowers every price on the card, and the total, from 1% to 200% of your list (click the percentage to go back to 100%);
+the list keeps its own prices. The **Selling** and **Buying** switches at the top put
+each whole group on the card or take it off; items you are buying are not counted in the total.
+
+Open your own Free Market shop in the game, then select **My FM shop** in Selling to make a card from
+its recognized listings. The reader checks for the owner's **Close Store** control; browsing another
+player's shop contributes market prices, not your sale items. Scroll the shop list to expose more rows.
+Unclear names or prices are skipped. Repeated reads do not add the same observed listing again.
+
+Your own shop's listings are tagged IN SHOP while the shop is open. Sold listings (greyed out) come off the list.
+When the shop closes (its window has been gone for a few reads), the unsold listings go back to the inventory with
+their prices and stats, merging into the item's inventory card when there is one. Seeing the shop open again makes
+them listings again. If the shop closed while MapleLite wasn't watching, Settings → **Move shop listings back** does
+it by hand. Identical listings on separate scroll pages cannot always be told apart, and the selected source filter
+is remembered.
 
 ## Managing plugins
 

@@ -32,6 +32,20 @@ public static class ClockZone {
   return $"UTC{(off < TimeSpan.Zero ? "-" : "+")}{Math.Abs(off.Hours):00}:{Math.Abs(off.Minutes):00}";
  }
 }
+// Lines where someone else mentions one of the player's names (their own chat lines don't count).
+public static class Mentions {
+ public static string[] Split(string names) => names.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+ public static bool Of(Entry e, IReadOnlyList<string> names) {
+  if (names.Count == 0) return false;
+  string sender = e.Username;
+  string body = sender.Length > 0 ? e.Message : e.Text;
+  foreach (var n in names) {
+   if (sender.Equals(n, StringComparison.OrdinalIgnoreCase)) return false;
+   if (Regex.IsMatch(body, $@"(?<![A-Za-z0-9]){Regex.Escape(n)}(?![A-Za-z0-9])", RegexOptions.IgnoreCase)) return true;
+  }
+  return false;
+ }
+}
 public static class Classifier {
  public static readonly string[] Channels = ["All", "Whisper", "Buddy", "Party", "Guild", "Alliance", "General", "Megaphone", "System", "Trade", "Fame", "Loot", "Unknown"];
  // Trade notifications and dialogs in either word order, with OCR-tolerant spacing ("tr ade").

@@ -127,6 +127,94 @@ public static class ImageOps
         return dst;
     }
 
+    /// <summary>
+    /// How many characters are drawn in a region of one text line: runs of columns holding ink. Lets a read be checked
+    /// against the picture (an OCR result that dropped or invented a character has a different count). Characters that
+    /// touch count as one, so compare against fonts with spacing, such as the game's.
+    /// </summary>
+    public static int CountInkRuns(Frame f, Region region, Func<int, bool> isInk)
+    {
+        var r = region.Intersect(f.Bounds);
+        int count = 0; bool previous = false;
+        for (int x = r.X; x < r.Right; x++)
+        {
+            bool ink = false;
+            for (int y = r.Y; y < r.Bottom && !ink; y++) ink = isInk(f.At(x, y));
+            if (ink && !previous) count++;
+            previous = ink;
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// The part of a picture left after trimming plain bands off its sides: from each side, columns (and with
+    /// <paramref name="topBottom"/>, rows) that look like the outermost one, row by row, within <paramref name="tolerance"/>
+    /// per channel for at least <paramref name="share"/> of their pixels. Comparing with the edge row by row, instead of
+    /// asking for one flat colour, trims a sky that shades from top to bottom too. Never trims below a quarter of the size.
+    /// </summary>
+    public static Region TrimPlain(Frame f, int tolerance = 18, double share = 0.92, bool leftRight = true, bool topBottom = false)
+    {
+        bool Close(int a, int b) => Math.Abs(Pixel.R(a) - Pixel.R(b)) <= tolerance && Math.Abs(Pixel.G(a) - Pixel.G(b)) <= tolerance && Math.Abs(Pixel.B(a) - Pixel.B(b)) <= tolerance;
+        bool ColumnLike(int x, int edge, int y0, int y1)
+        {
+            int same = 0;
+            for (int y = y0; y < y1; y++) if (Close(f.At(x, y), f.At(edge, y))) same++;
+            return same >= (y1 - y0) * share;
+        }
+        bool RowLike(int y, int edge, int x0, int x1)
+        {
+            int same = 0;
+            for (int x = x0; x < x1; x++) if (Close(f.At(x, y), f.At(x, edge))) same++;
+            return same >= (x1 - x0) * share;
+        }
+        // a band counts from 3 px: an edge that merely looks like itself is not a plain band
+        const int MinBand = 3;
+        int left = 0, right = f.W - 1, top = 0, bottom = f.H - 1;
+        int minW = Math.Max(1, f.W / 4), minH = Math.Max(1, f.H / 4);
+        if (topBottom)
+        {
+            int n = 0; while (f.H - n > minH && RowLike(n, 0, 0, f.W)) n++;
+            if (n >= MinBand) top = n;
+            n = 0; while (bottom - top + 1 - n > minH && RowLike(f.H - 1 - n, f.H - 1, 0, f.W)) n++;
+            if (n >= MinBand) bottom = f.H - 1 - n;
+        }
+        if (leftRight)
+        {
+            int n = 0; while (f.W - n > minW && ColumnLike(n, 0, top, bottom + 1)) n++;
+            if (n >= MinBand) left = n;
+            n = 0; while (right - left + 1 - n > minW && ColumnLike(f.W - 1 - n, f.W - 1, top, bottom + 1)) n++;
+            if (n >= MinBand) right = f.W - 1 - n;
+        }
+        return new Region(left, top, right - left + 1, bottom - top + 1);
+    }
+
+    /// <summary>
+    /// The game's picture inside a window that is bigger than it: in borderless fullscreen on a monitor of another
+    /// shape, the game draws black bars above and below (or left and right). Bars count only when both opposite
+    /// edges have them, and the thinner side sets both, so a dark sky at the top of a map can't pass for a bar.
+    /// Returns <see cref="Frame.Bounds"/> when there are none.
+    /// </summary>
+    public static Region Letterbox(Frame f, int minBar = 8)
+    {
+        if (f.W < 200 || f.H < 200 || LooksBlack(f)) return f.Bounds;
+        bool Row(int y) { int o = y * f.W; for (int x = 0; x < f.W; x += 3) if (Pixel.Max(f.Px[o + x]) > 3) return false; return true; }
+        bool Col(int x) { for (int y = 0; y < f.H; y += 3) if (Pixel.Max(f.Px[y * f.W + x]) > 3) return false; return true; }
+        int top = 0, bottom = 0, left = 0, right = 0;
+        while (top < f.H / 4 && Row(top)) top++;
+        while (bottom < f.H / 4 && Row(f.H - 1 - bottom)) bottom++;
+        while (left < f.W / 4 && Col(left)) left++;
+        while (right < f.W / 4 && Col(f.W - 1 - right)) right++;
+        int v = Math.Min(top, bottom), h = Math.Min(left, right);
+        if (v < minBar) v = 0;
+        if (h < minBar) h = 0;
+        if (v == 0 && h == 0) return f.Bounds;
+        // bars of odd total split unevenly (52 above, 53 below): a side one thicker than the other keeps its own size;
+        // one much thicker has dark scenery past its bar, so it gets the thinner side's
+        static int Side(int own, int thin) => thin == 0 ? 0 : own <= thin + 1 ? own : thin;
+        int t = Side(top, v), b = Side(bottom, v), l = Side(left, h), r = Side(right, h);
+        return new Region(l, t, f.W - l - r, f.H - t - b);
+    }
+
     /// <summary>True when nearly every sampled pixel is black: what blocked or failed captures look like.</summary>
     public static bool LooksBlack(Frame f, int samples = 400)
     {

@@ -29,7 +29,11 @@ public sealed record GameWindow(nint Handle, int ProcessId, string ProcessName, 
 /// <summary>Which window to follow: by process name, or a specific process the user picked.</summary>
 public sealed record GameTarget(string ProcessName = "MapleStory", int? ProcessId = null);
 
-public sealed record WindowCandidate(nint Handle, int ProcessId, string ProcessName, string Title);
+public sealed record WindowCandidate(nint Handle, int ProcessId, string ProcessName, string Title)
+{
+    /// <summary>True when the window is minimized: its picture can't be read until it's restored.</summary>
+    public bool Minimized { get; init; }
+}
 
 public interface IGameWindowFinder
 {
@@ -60,9 +64,14 @@ public interface IWindowList
     IReadOnlyList<WindowCandidate> TopLevelWindows();
 }
 
+/// <summary>Puts a picture on the OS clipboard, so it can be pasted into chat apps.</summary>
 public interface IClipboardImage
 {
-    Task SetPngAsync(byte[] png);
+    /// <summary>
+    /// The same picture as pixels and as PNG bytes: apps that understand PNG keep its transparency,
+    /// the rest get the pixels.
+    /// </summary>
+    Task SetImageAsync(Frame image, byte[] png);
 }
 
 public enum PermissionState { Granted, Denied, NotRequired, Unknown }

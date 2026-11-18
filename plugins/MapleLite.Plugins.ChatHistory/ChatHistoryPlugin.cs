@@ -12,13 +12,21 @@ public sealed class ChatHistoryPlugin : IPlugin
 {
     MemoryEngine? _engine;
 
-    public PluginManifest Manifest { get; } = new("chathistory", "Chat History", "1.0.0", "CheesyFrog Technologies",
+    public PluginManifest Manifest { get; } = new("chathistory", "Chat History", "0.1.0-alpha", "CheesyFrog Technologies",
         "Chat journal: a searchable log of chat, whispers, trades, fame and loot.");
 
-    public async Task StartAsync(IPluginContext context)
+    public Task StartAsync(IPluginContext context)
     {
         _engine = new MemoryEngine(context);
-        await _engine.AutoStartAsync();
+        // Finding the chat box reads the screen with OCR (over a second): do it after startup instead of holding
+        // up MapleLite's window and the other plugins. It runs on the UI thread, where the engine's timers live.
+        var engine = _engine;
+        context.OnUi(async () =>
+        {
+            try { await engine.AutoStartAsync(); }
+            catch (Exception e) { context.Log("chat reading didn't start: " + e.Message); }
+        });
+        return Task.CompletedTask;
     }
 
     public async Task StopAsync()

@@ -26,7 +26,7 @@ public sealed class WindowsPlatform : IPlatform
     public ICursor Cursor => _finder;
     public IWindowList Windows => _finder;
     public IOcrEngine? Ocr { get; }
-    public IClipboardImage? Clipboard => null; // arrives with the sale card port
+    public IClipboardImage? Clipboard { get; } = new WindowsClipboard();
     public PermissionState ScreenCapturePermission() => PermissionState.NotRequired;
     public IReadOnlyList<string> Notes { get; }
 

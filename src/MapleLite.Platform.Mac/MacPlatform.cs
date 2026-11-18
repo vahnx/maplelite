@@ -1,45 +1,54 @@
-using MapleLite.Core.Imaging;
 using MapleLite.Core.Ocr;
 using MapleLite.Core.Platform;
+using MapleLite.Platform.Mac.Interop;
 
 namespace MapleLite.Platform.Mac;
 
 /// <summary>
-/// macOS platform (milestone 5). Planned:
+/// macOS platform, for the native macOS MapleStory client.
 ///  - window finding: CGWindowListCopyWindowInfo (owner name/PID, bounds, on-screen state)
-///  - capture: ScreenCaptureKit (SCStream for a single window), CGWindowListCreateImage on older systems
+///  - capture: ScreenCaptureKit (one SCStream per window), CGWindowListCreateImage before macOS 12.3
 ///  - OCR: Apple Vision VNRecognizeTextRequest (accurate level, en-US)
 ///  - cursor: CGEventGetLocation
 ///  - needs Screen Recording permission (CGPreflightScreenCaptureAccess / CGRequestScreenCaptureAccess)
 ///  - Retina: capture is in physical pixels; GameWindow.Scale carries the backing scale factor
+/// Everything goes through P/Invoke into the system frameworks, so this project builds on any OS.
 /// </summary>
 public sealed class MacPlatform : IPlatform
 {
-    sealed class NotYet : IGameWindowFinder, IWindowCapture, ICursor, IWindowList
+    readonly MacFinder _finder = new();
+    readonly MacCapture _capture = new();
+
+    public MacPlatform()
     {
-        public GameWindow? Find(GameTarget target) => null;
-        public GameWindow? Refresh(GameWindow window) => null;
-        public IReadOnlyList<WindowCandidate> ListCandidates() => [];
-        public IReadOnlyList<WindowCandidate> TopLevelWindows() => [];
-        public Task<Frame> CaptureClientAsync(GameWindow window, CancellationToken ct) => throw new PlatformNotSupportedException("macOS capture arrives in milestone 5.");
-        public Task<Frame> CaptureWindowAsync(nint handle, CancellationToken ct) => throw new PlatformNotSupportedException("macOS capture arrives in milestone 5.");
-        public (int X, int Y)? PositionIn(GameWindow window) => null;
-        public void Dispose() { }
+        Ocr = MacOcrEngine.TryCreate();
+        var notes = new List<string>
+        {
+            "Capture uses ScreenCaptureKit, which reads only the game window's picture, even behind other windows.",
+            "MapleLite needs Screen Recording permission (System Settings > Privacy & Security > Screen Recording). "
+                + "When started from Terminal, the permission belongs to Terminal. Restart MapleLite after allowing it.",
+            "The game must stay on the current Space and not minimized; fullscreen games are on their own Space, so windowed is easiest.",
+        };
+        if (Ocr == null) notes.Add("Text reading needs macOS 10.15 or later (Apple Vision).");
+        if (_capture.FallbackReason is { } why) notes.Add("Capture is using the slower fallback: " + why);
+        Notes = notes;
     }
 
-    readonly NotYet _impl = new();
     public string Name => "macOS";
-    public IGameWindowFinder Finder => _impl;
-    public IWindowCapture Capture => _impl;
-    public ICursor Cursor => _impl;
-    public IWindowList Windows => _impl;
-    public IOcrEngine? Ocr => null;
-    public IClipboardImage? Clipboard => null;
-    public PermissionState ScreenCapturePermission() => PermissionState.Unknown;
-    public IReadOnlyList<string> Notes { get; } =
-    [
-        "macOS support is not built yet (milestone 5): the host runs, but it can't find or capture the game.",
-        "It will need Screen Recording permission in System Settings > Privacy & Security.",
-    ];
-    public void Dispose() { }
+    public IGameWindowFinder Finder => _finder;
+    public IWindowCapture Capture => _capture;
+    public ICursor Cursor => _finder;
+    public IWindowList Windows => _finder;
+    public IOcrEngine? Ocr { get; }
+    public IClipboardImage? Clipboard { get; } = new MacClipboard();
+
+    public PermissionState ScreenCapturePermission()
+    {
+        try { return CG.CGPreflightScreenCaptureAccess() ? PermissionState.Granted : PermissionState.Denied; }
+        catch (EntryPointNotFoundException) { return PermissionState.NotRequired; } // before 10.15 there was no such permission
+    }
+
+    public IReadOnlyList<string> Notes { get; }
+
+    public void Dispose() => _capture.Dispose();
 }

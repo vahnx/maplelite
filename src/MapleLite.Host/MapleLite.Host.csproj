@@ -15,6 +15,8 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Run on a newer .NET when 8 isn't installed (e.g. a Mac with only the .NET 11 SDK). -->
+    <RollForward>Major</RollForward>
   </PropertyGroup>
   <PropertyGroup Condition="$(TargetFramework.Contains('-windows'))">
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
@@ -37,13 +39,19 @@
     <ProjectReference Include="..\MapleLite.Platform.Linux\MapleLite.Platform.Linux.csproj" />
   </ItemGroup>
 
+  <!-- Shared game data (the item catalog and its icons) ships beside the app as GameData/, for every plugin. -->
+  <ItemGroup>
+    <None Include="..\MapleLite.Core\GameData\**\*" Exclude="..\MapleLite.Core\GameData\**\desktop.ini"
+          LinkBase="GameData" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
   <!--
     Bundled plugins are loaded the same way third-party ones will be: from plugins/<Name>/<Name>.dll,
     each in its own AssemblyLoadContext. The host doesn't reference them; it only builds them first
     and copies their own assembly (Core, Sdk and Avalonia always come from the host).
   -->
   <ItemGroup>
-    <BundledPlugin Include="MapleLite.Plugins.ChatHistory;MapleLite.Plugins.Loot;MapleLite.Plugins.SaleCard;MapleLite.Plugins.XpTracker" />
+    <BundledPlugin Include="MapleLite.Plugins.ChatHistory;MapleLite.Plugins.Loot;MapleLite.Plugins.SaleCard;MapleLite.Plugins.XpTracker;MapleLite.Plugins.SpawnTimer" />
     <ProjectReference Include="@(BundledPlugin->'$(MSBuildThisFileDirectory)..\..\plugins\%(Identity)\%(Identity).csproj')"
                       ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
@@ -56,14 +64,18 @@
     <ItemGroup>
       <_PluginFile Include="@(_PluginDll)" Plugin="%(Filename)" />
       <_PluginFile Include="@(_PluginDll->'%(RootDir)%(Directory)%(Filename).pdb')" Plugin="%(Filename)" />
+      <!-- A plugin's Assets folder (catalogs, icons) ships beside its .dll as plugins/<Name>/Assets. -->
+      <_PluginAsset Include="$(MSBuildThisFileDirectory)../../plugins/%(BundledPlugin.Identity)/Assets/**/*" Exclude="$(MSBuildThisFileDirectory)../../plugins/%(BundledPlugin.Identity)/Assets/**/desktop.ini" Plugin="%(BundledPlugin.Identity)" />
     </ItemGroup>
   </Target>
   <!-- Inner (per-framework) builds only: the outer multi-target build has no OutDir and would copy into the source tree. -->
   <Target Name="CopyBundledPlugins" AfterTargets="Build" DependsOnTargets="ResolveBundledPlugins" Condition="'$(TargetFramework)' != ''">
     <Copy SourceFiles="@(_PluginFile)" DestinationFolder="$(OutDir)plugins\%(_PluginFile.Plugin)" SkipUnchangedFiles="true" Condition="Exists('%(_PluginFile.FullPath)')" />
+    <Copy SourceFiles="@(_PluginAsset)" DestinationFiles="@(_PluginAsset->'$(OutDir)plugins\%(Plugin)\Assets\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
   <!-- dotnet publish: put the plugins beside the published app too. -->
   <Target Name="PublishBundledPlugins" AfterTargets="Publish" DependsOnTargets="ResolveBundledPlugins" Condition="'$(TargetFramework)' != ''">
     <Copy SourceFiles="@(_PluginFile)" DestinationFolder="$(PublishDir)plugins\%(_PluginFile.Plugin)" SkipUnchangedFiles="true" Condition="Exists('%(_PluginFile.FullPath)')" />
+    <Copy SourceFiles="@(_PluginAsset)" DestinationFiles="@(_PluginAsset->'$(PublishDir)plugins\%(Plugin)\Assets\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
 </Project>
