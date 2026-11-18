@@ -191,7 +191,7 @@ frames (keep the callback short), `context.Ocr` for text, `context.Storage` for 
 helpers or `ml.*` resources for a page that follows the theme. Third-party plugins will come through a
 reviewed hub that builds them from source.
 
-## Chat History (formerly MapleMemory)
+## Chat History
 
 The chat journal from the MapleMemory app, as a plugin. Its parsers, spam and partial-repeat filters and time filters
 are the app's code, unchanged (the loot tracker is now the Loot plugin); its 99 self-test checks run as xUnit tests. What changed: frames come
@@ -289,6 +289,11 @@ Plugins don't need any of that. Capture, OCR and the window live in MapleLite's 
 only through `IPluginContext`. On a Mac, users get MapleLite as a self-contained `.app` with the .NET runtime inside,
 so they don't install .NET themselves. Plugins are loaded by that runtime, not by macOS, so they need no separate
 signing.
+
+## Future plugin ideas
+
+- **Hidden Area Outliner:** shows where hidden portals are in-game, with overlays.
+- **NPC Highlighter:** highlights specific NPCs in any color.
 
 ## Support Development
 
