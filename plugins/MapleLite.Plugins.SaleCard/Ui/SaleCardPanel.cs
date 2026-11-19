@@ -756,7 +756,7 @@ internal sealed class SaleCardPanel : UserControl
         var import = Button("Import from Sale Card Generator…", async () => await ImportAsync());
         ToolTip.SetTip(import, "Copies the app's list, prices, FM shop prices, site prices and equipment stats from its Data folder. The app's files are not changed; what MapleLite had is backed up first.");
         var openData = Button("Open data folder", () => OpenFolder(_engine.DataFolder));
-        var openChecks = Button("Open hover checks", () => OpenFolder(_engine.DiagnosticsFolder));
+        var openChecks = Button("Open hover checks (Developer)", () => OpenFolder(_engine.DiagnosticsFolder));
         ToolTip.SetTip(openChecks, "When a hovered tooltip can't be read three times in a row, the game picture and the reason are saved here, so the miss can be looked into.");
 
         var resetList = Button("Reset settings and list…", async () =>

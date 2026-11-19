@@ -15,7 +15,7 @@ public sealed class HelloPlugin : IPlugin
     IPluginContext? _ctx;
     string _lastChat = "nothing yet (turn on Chat History)";
 
-    public PluginManifest Manifest { get; } = new("hello", "Hello", "1.0.0", "You", "A sample plugin to copy when writing your own.");
+    public PluginManifest Manifest { get; } = new("hello", "Hello (Developer)", "1.0.0", "You", "A sample plugin to copy when writing your own.");
 
     public Task StartAsync(IPluginContext context)
     {

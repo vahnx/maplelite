@@ -118,7 +118,7 @@ public sealed class LootPlugin : IPlugin
         var actions = Wrap(
             Button("Export CSV…", async () => await Export(view)),
             Button("Open loot log folder", () => OpenFolder(log.Folder)),
-            Button("Record 20 s for diagnosis", () =>
+            Button("Record 20 s for diagnosis (Developer)", () =>
             {
                 if (reader.IsRecording) return;
                 reader.StartRecording(log.Folder, 20);

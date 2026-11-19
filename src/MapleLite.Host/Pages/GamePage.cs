@@ -30,6 +30,10 @@ internal sealed class GamePage : UserControl
     readonly Button _recButton;
     readonly TextBlock _recStatus = Ui.Muted("Not recording.");
     readonly DispatcherTimer _recTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    readonly Border _previewHost;
+    readonly Button _previewToggle;
+    /// <summary>Whether the live picture is shown; hidden by default and remembered while the app runs.</summary>
+    static bool s_previewExpanded;
     WriteableBitmap? _bitmap;
     IDisposable? _sub;
     volatile GameFrame? _pending;
@@ -58,7 +62,7 @@ internal sealed class GamePage : UserControl
                 })));
 
         var ocrCard = Ui.Card(Ui.Stack(10,
-            Ui.Subheading("Shared text reader"),
+            Ui.Subheading("Shared text reader (Developer)"),
             Ui.Muted("Every plugin reads text through this one service. Reading the same picture twice is served from its cache."),
             Ui.Row(8, Ui.Button("Read text in the game picture", ReadText), Ui.Button("Save picture…", SavePicture)),
             _ocrOut));
@@ -67,7 +71,7 @@ internal sealed class GamePage : UserControl
         _recRate.SelectedIndex = Array.IndexOf(SessionRecorder.Rates, SessionRecorder.DefaultFps);
         _recButton = Ui.Button("Start recording", ToggleRecording);
         var recordCard = Ui.Card(Ui.Stack(10,
-            Ui.Subheading("Record a session"),
+            Ui.Subheading("Record a session (Developer)"),
             Ui.Muted("Saves the game picture, losslessly and with timings, so it can be replayed through MapleLite later "
                 + "(run with --replay <folder>) to test and tune the readers. Only the game window is recorded. "
                 + "A 1080p picture is about 1–2 MB, so 5 minutes at 5/s needs roughly 1–3 GB; unchanged pictures aren't saved twice."),
@@ -75,11 +79,17 @@ internal sealed class GamePage : UserControl
             _recStatus));
         _recTimer.Tick += (_, _) => ShowRecording();
 
+        _previewHost = new Border { Child = _preview, MinHeight = 200, IsVisible = s_previewExpanded }.Res(Border.BackgroundProperty, ThemeTokens.Background);
+        _previewToggle = Ui.Button(s_previewExpanded ? "Collapse" : "Expand", TogglePreview);
+        var previewCard = Ui.Card(Ui.Stack(10,
+            Ui.Row(8, Ui.Subheading("Game window"), _previewToggle),
+            _previewHost), 8);
+
         var statusRow = Ui.Row(10, _dot, _state);
         var content = Ui.Stack(18,
             Ui.Heading("Game"),
             Ui.Card(Ui.Stack(14, statusRow, facts, notes)),
-            Ui.Card(new Border { Child = _preview, MinHeight = 200 }.Res(Border.BackgroundProperty, ThemeTokens.Background), 8),
+            previewCard,
             recordCard,
             ocrCard,
             Ui.Card(target));
@@ -88,7 +98,7 @@ internal sealed class GamePage : UserControl
         AttachedToVisualTree += (_, _) =>
         {
             _shell.Capture.StatusChanged += OnStatus;
-            _sub = _shell.Capture.Subscribe(f => { if (Interlocked.Exchange(ref _pending, f) == null) Dispatcher.UIThread.Post(Draw, DispatcherPriority.Background); }, _shell.Settings.PreviewFps);
+            if (s_previewExpanded) StartPreview();
             OnStatus(_shell.Capture.Status);
             if (_windows.ItemCount == 0) LoadWindows();
             ShowRecording();
@@ -101,6 +111,19 @@ internal sealed class GamePage : UserControl
             _sub?.Dispose(); _sub = null;
         };
     }
+
+    void TogglePreview()
+    {
+        s_previewExpanded = !s_previewExpanded;
+        _previewHost.IsVisible = s_previewExpanded;
+        _previewToggle.Content = s_previewExpanded ? "Collapse" : "Expand";
+        // Only take preview frames while the picture is on screen, so a hidden preview costs nothing.
+        if (s_previewExpanded) StartPreview();
+        else { _sub?.Dispose(); _sub = null; }
+    }
+
+    void StartPreview() =>
+        _sub ??= _shell.Capture.Subscribe(f => { if (Interlocked.Exchange(ref _pending, f) == null) Dispatcher.UIThread.Post(Draw, DispatcherPriority.Background); }, _shell.Settings.PreviewFps);
 
     void OnStatus(CaptureStatus s) => Dispatcher.UIThread.Post(() =>
     {

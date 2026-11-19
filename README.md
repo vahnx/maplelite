@@ -159,12 +159,12 @@ Good first checks:
 Build as on macOS with `-r linux-x64`. The Linux capture and OCR layer (X11 + Tesseract) is still milestone 5, so it
 can't see the game yet.
 
-### Test switches
+### Test switches (Developer)
 
 Run the built `MapleLite` executable with these. None of them touch the live game:
 
 - `--replay <png>`: run the whole host on a saved capture instead of the game
-- `--replay <folder> [--loop]`: play back a session recorded with **Record a session** on the Game page (saved under `recordings/` in MapleLite's data folder), in real time, through every plugin
+- `--replay <folder> [--loop]`: play back a session recorded with **Record a session (Developer)** on the Game page (saved under `recordings/` in MapleLite's data folder), in real time, through every plugin
 - `--ocrtest <png> --out <txt> [--region x,y,w,h]`: read a saved capture with the shared OCR and write the lines
   (with `--region`: chat-glyph cleanup, compared across enlarge modes)
 - `--snapshot <png> [--theme <id>] [--page game|settings|<plugin-id>] [--wait <s>]`: render the window to a PNG and exit
