@@ -22,6 +22,9 @@ internal static class Win32
     [DllImport("user32.dll")] public static extern bool ClientToScreen(nint h, ref POINT p);
     [DllImport("user32.dll")] public static extern bool ScreenToClient(nint h, ref POINT p);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
+    [DllImport("user32.dll")] public static extern nint WindowFromPoint(POINT p);
+    [DllImport("user32.dll")] public static extern nint GetAncestor(nint h, uint flags);
+    public const uint GA_ROOT = 2;
     [DllImport("user32.dll")] public static extern nint GetForegroundWindow();
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(nint h, out int pid);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(nint h, StringBuilder s, int max);

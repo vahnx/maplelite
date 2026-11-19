@@ -157,7 +157,7 @@ public sealed class SaleCardEngine
             if (!S.CompactDefaulted) { S.CompactTiles = true; S.CompactDefaulted = true; }
             // checked items first by default; a sort you pick afterwards (even back to the order found) is kept
             if (!S.ListSortDefaulted) { if (S.ListSort.Length == 0) { S.ListSort = "on"; S.ListSortDown = false; } S.ListSortDefaulted = true; }
-            S.ShopSold ??= new();
+            S.ShopSold ??= new(); S.KindPercent ??= new();
             // Lists saved before this was remembered: what is there came from the game, so keep following it.
             S.AutoLocation ??= S.Location;
             S.AutoIgn ??= S.Seller;
@@ -174,7 +174,7 @@ public sealed class SaleCardEngine
                 {
                     Key = s.Key, ItemId = s.ItemId, Tab = s.Tab, Category = Categories.Of(s.ItemId), Stacks = s.Stacks,
                     Name = s.Name, Qty = s.Qty, Include = s.Include, Custom = s.Custom, Stats = s.Stats, Slots = s.Slots, SlotRow = s.SlotRow, SlotCol = s.SlotCol,
-                    AutoStats = s.AutoStats, AutoSlots = s.AutoSlots, IconPx = iconPx, Buying = s.Buying,
+                    AutoStats = s.AutoStats, AutoSlots = s.AutoSlots, IconPx = iconPx, Buying = s.Buying, PricePercent = s.PricePercent,
                 };
                 if (_notForSale.Has(item.Ident)) continue;
                 item.Icon = Icon(s.ItemId, iconPx);
@@ -212,7 +212,7 @@ public sealed class SaleCardEngine
             {
                 Key = i.Key, ItemId = i.ItemId, Tab = i.Tab, Name = i.Name, Qty = i.Qty, Include = i.Include, Custom = i.Custom,
                 Stats = i.Stats, Slots = i.Slots, SlotRow = i.SlotRow, SlotCol = i.SlotCol, AutoStats = i.AutoStats, AutoSlots = i.AutoSlots, Stacks = i.Stacks,
-                Icon = Session.Base64(i.IconPx), Buying = i.Buying,
+                Icon = Session.Base64(i.IconPx), Buying = i.Buying, PricePercent = i.PricePercent,
             }).ToList();
             Store.Write(SessionFile, JsonSerializer.Serialize(S));
         }
@@ -281,6 +281,20 @@ public sealed class SaleCardEngine
                 var keep = group.OrderBy(i => i.Tab == "Equip" ? 0 : i.Tab == "Items" ? 1 : 2).First();
                 remove.UnionWith(group.Where(i => i != keep));
             }
+        // Cards made while the tab strip was misread (ores filed under Cash): the copy is dropped when the item's real tab
+        // has a card for it, and otherwise moves to that tab. Deco may hold set-up and cash items, so it is left alone.
+        foreach (var wrong in Items.Where(i => i.ItemId != 0 && i.ItemId / 10000 != 204 && i.Tab is "Equip" or "Use" or "Set Up" or "Etc" or "Cash"
+                     && KindTab(i.ItemId) is { } k && k != i.Tab).ToList())
+        {
+            var real = KindTab(wrong.ItemId)!;
+            // equipment keys start "Equip:" whatever the tab; the others start with the tab's name
+            string key = wrong.Key.StartsWith(wrong.Tab + ":", StringComparison.Ordinal) ? real + wrong.Key[wrong.Tab.Length..] : wrong.Key;
+            if (Items.Any(i => i != wrong && !remove.Contains(i) && (i.Key == key || (i.Tab == real && i.ItemId == wrong.ItemId)))) { remove.Add(wrong); continue; }
+            wrong.Tab = real; wrong.Key = key;
+        }
+        // Storage stacks saved while their count couldn't be read, beside a counted card of the same item.
+        foreach (var blank in Items.Where(i => i.Tab == StorageTab && i.ItemId != 0 && !i.IsEquipment && string.IsNullOrEmpty(i.Qty)).ToList())
+            if (Items.Any(i => i != blank && i.Tab == StorageTab && i.ItemId == blank.ItemId && !string.IsNullOrEmpty(i.Qty))) remove.Add(blank);
         foreach (var item in remove) Remove(item);
     }
 
@@ -397,10 +411,12 @@ public sealed class SaleCardEngine
         {
             var frame = Latest();
             if (frame == null || !Monitoring) return;
-            if (ChannelReader.Read(frame) is int ch && ch.ToString() != S.Channel) { S.Channel = ch.ToString(); CardChanged?.Invoke(); Changed?.Invoke(); }
+            // Channel, location and IGN come from MapleLite's shared game state (context.Game), read once for every plugin.
+            var game = _ctx.Game;
+            if (game.Channel is int ch && ch.ToString() != S.Channel) { S.Channel = ch.ToString(); CardChanged?.Invoke(); Changed?.Invoke(); }
             // The minimap at its middle size hides the map's name: the card follows and leaves the location off. While the
             // minimap isn't showing at all, the last choice stands.
-            var minimap = MapReader.State(frame);
+            var minimap = game.Minimap;
             if (minimap is MinimapState.Full or MinimapState.NameHidden && (minimap == MinimapState.NameHidden) != S.MapNameHidden)
             {
                 S.MapNameHidden = minimap == MinimapState.NameHidden;
@@ -414,17 +430,12 @@ public sealed class SaleCardEngine
                 if (!S.NoMap) CardChanged?.Invoke();
             }
             // Follow the map as you move, unless you typed a location of your own.
-            if (++_tick % 3 == 1 && (string.IsNullOrWhiteSpace(S.Location) || S.Location == S.AutoLocation))
-            {
-                var (_, map) = await MapReader.ReadAsync(_ctx.Ocr, frame);
-                if (!string.IsNullOrWhiteSpace(map) && map != S.Location) { S.Location = S.AutoLocation = map; CardChanged?.Invoke(); Changed?.Invoke(); }
-            }
+            ++_tick;
+            if ((string.IsNullOrWhiteSpace(S.Location) || S.Location == S.AutoLocation) && game.Location is { Length: > 0 } map && map != S.Location)
+            { S.Location = S.AutoLocation = map; CardChanged?.Invoke(); Changed?.Invoke(); }
             // The IGN is taken from the game's status bar; one you typed yourself is left alone.
-            if (_tick % 3 == 1 && (string.IsNullOrWhiteSpace(S.Seller) || S.Seller == S.AutoIgn))
-            {
-                var ign = await IgnReader.ReadAsync(_ctx.Ocr, frame);
-                if (!string.IsNullOrWhiteSpace(ign) && ign != S.Seller) { S.Seller = S.AutoIgn = ign; CardChanged?.Invoke(); Changed?.Invoke(); }
-            }
+            if ((string.IsNullOrWhiteSpace(S.Seller) || S.Seller == S.AutoIgn) && game.Ign is { Length: > 0 } ign && ign != S.Seller)
+            { S.Seller = S.AutoIgn = ign; CardChanged?.Invoke(); Changed?.Invoke(); }
             if (_tick % 3 == 2) await ReadAvatar(frame, cheap: true);
             var notes = new List<string>();
             if (await MonitorInventory(frame) is { } inv) notes.Add(inv);
@@ -746,6 +757,23 @@ public sealed class SaleCardEngine
 
     // ---------------------------------------------------------------- scanning a grid
 
+    /// <summary>The inventory tab an item id belongs in (1xxxxxx Equip … 5xxxxxx Cash), or null.</summary>
+    static string? KindTab(int id) => (id / 1000000) switch { 1 => "Equip", 2 => "Use", 3 => "Set Up", 4 => "Etc", 5 => "Cash", _ => null };
+
+    /// <summary>
+    /// The tab the recognised items say is open, when it isn't the one read off the tab strip: at least three items,
+    /// three in four of one kind. Deco can hold set-up and cash items, so those never overrule it.
+    /// </summary>
+    static string? TabFromItems(List<SlotRead> slots, string tab)
+    {
+        var known = slots.Where(s => s.ItemId != 0 && KindTab(s.ItemId) != null).ToList();
+        if (known.Count < 3) return null;
+        var top = known.GroupBy(s => KindTab(s.ItemId)!).MaxBy(g => g.Count())!;
+        if (top.Key == tab || top.Count() * 4 < known.Count * 3) return null;
+        if (tab == "Deco" && top.Key is "Set Up" or "Cash") return null;
+        return top.Key;
+    }
+
     readonly HashSet<string> _unsure = new();   // unrecognised slots seen on the last automatic scan
     bool _unsurePending;
     readonly HashSet<string> _missing = new();  // cards not found on the last read of their tab: removed if still gone on the next
@@ -778,6 +806,8 @@ public sealed class SaleCardEngine
         var vision = Vision!;
         bool storage = tab == StorageTab;
         var slots = await Task.Run(() => vision.ReadSlots(frame, lay));
+        // The lit tab is sometimes misread (Etc taken for Cash): the items themselves say which tab this is.
+        if (!storage && TabFromItems(slots, tab) is { } real) tab = real;
         if (!storage && lay.Tab >= 0)
         {
             var empty = new HashSet<(int, int)>();
@@ -860,13 +890,14 @@ public sealed class SaleCardEngine
 
         int added = 0, unknown = 0, unclear = 0;
         var fresh = new List<SaleItem>();
+        var inView = cards.Select(c => c.key).ToHashSet();
         foreach (var (key, s, stacks) in cards)
         {
             bool carryInclude = true, carryState = false;
-            string carryCustom = "", carryStats = "", carrySlots = "";
+            string carryCustom = "", carryStats = "", carrySlots = ""; int carryPercent = 100;
             void Carry(SaleItem stale)
             {
-                if (!carryState) { carryInclude = stale.Include; carryCustom = stale.Custom; carryStats = stale.Stats; carrySlots = stale.Slots; carryState = true; }
+                if (!carryState) { carryInclude = stale.Include; carryCustom = stale.Custom; carryStats = stale.Stats; carrySlots = stale.Slots; carryPercent = stale.PricePercent; carryState = true; }
                 Remove(stale);
             }
             // A tooltip is authoritative for the slot under the cursor. Remove a stale card for the old icon/title
@@ -909,6 +940,9 @@ public sealed class SaleCardEngine
                 seenUnsure.Add(key);
                 if (!_unsure.Contains(key)) { _unsurePending = true; unclear++; continue; }
             }
+            // Storage: a stack whose count couldn't be read (mid-scroll, half drawn) is not a second stack of an item
+            // that already has a card there.
+            if (storage && s.ItemId != 0 && !Equip(s) && !s.HasCount && Items.Any(i => i.Tab == StorageTab && i.ItemId == s.ItemId && i.Key != key)) continue;
 
             var item = new SaleItem { Key = key, ItemId = s.ItemId, Tab = tab, Category = Categories.Of(s.ItemId), Stacks = stacks, SlotRow = s.Row, SlotCol = s.Col };
             var prior = priorCards.FirstOrDefault(i => !priorUsed.Contains(i) && i.ItemId == s.ItemId && i.SlotRow == s.Row && i.SlotCol == s.Col)
@@ -919,14 +953,25 @@ public sealed class SaleCardEngine
             {
                 priorUsed.Add(prior);
                 carryState = true;
-                carryInclude = prior.Include; carryCustom = prior.Custom; carryStats = prior.Stats; carrySlots = prior.Slots;
+                carryInclude = prior.Include; carryCustom = prior.Custom; carryStats = prior.Stats; carrySlots = prior.Slots; carryPercent = prior.PricePercent;
                 item.AutoStats = prior.AutoStats; item.AutoSlots = prior.AutoSlots;
                 // the card back from the shop has found its slot: this card replaces it
                 if (prior.Key.StartsWith(ReturnedPrefix, StringComparison.Ordinal)) Remove(prior);
+                // The same item in the same slot with a new count (you picked up more ore): the old card is replaced,
+                // not kept beside the new one. On a scrolling tab the old card would otherwise never be cleared.
+                else if (!storage && prior.Tab == tab && !prior.IsEquipment && prior.SlotRow == s.Row && prior.SlotCol == s.Col && !inView.Contains(prior.Key))
+                    Remove(prior);
             }
+            // Storage: a counted stack replaces a card of the same item made while its count couldn't be read.
+            if (storage && s.ItemId != 0 && !Equip(s) && s.HasCount)
+                foreach (var blank in Items.Where(i => i.Tab == StorageTab && i.ItemId == s.ItemId && string.IsNullOrEmpty(i.Qty) && !inView.Contains(i.Key)).ToList())
+                {
+                    if (!carryState) { carryState = true; carryInclude = blank.Include; carryCustom = blank.Custom; carryStats = blank.Stats; carrySlots = blank.Slots; carryPercent = blank.PricePercent; }
+                    Remove(blank);
+                }
             if (carryState)
             {
-                item.Include = carryInclude; item.Custom = carryCustom; item.Stats = carryStats; item.Slots = carrySlots;
+                item.Include = carryInclude; item.Custom = carryCustom; item.Stats = carryStats; item.Slots = carrySlots; item.PricePercent = carryPercent;
             }
             bool showQty = !item.IsEquipment && (s.HasCount || stacks > 1);
             item.Qty = !showQty ? "" : stacks > 1 ? $"{s.Quantity} ×{stacks}" : s.Quantity.ToString();
@@ -1002,19 +1047,24 @@ public sealed class SaleCardEngine
 
     // ---------------------------------------------------------------- game info
 
-    /// <summary>Fills Location and IGN from the game picture. With overwrite off, only empty boxes are filled and nothing is reported.</summary>
+    /// <summary>
+    /// Fills Location, IGN and channel from MapleLite's shared game state (context.Game). With overwrite off, only empty
+    /// boxes are filled and nothing is reported.
+    /// </summary>
     async Task ReadGameInfo(Frame frame, bool overwrite)
     {
+        var game = _ctx.Game;
         var notes = new List<string>();
         if (overwrite || string.IsNullOrWhiteSpace(S.Seller))
         {
-            var ign = await IgnReader.ReadAsync(_ctx.Ocr, frame);
+            var ign = game.Ign;
             if (!string.IsNullOrWhiteSpace(ign)) { S.Seller = S.AutoIgn = ign; notes.Add("IGN read."); }
             else notes.Add("Couldn't read the IGN from the status bar (is it covered?), so type it in.");
         }
         if (overwrite || string.IsNullOrWhiteSpace(S.Location))
         {
-            var (state, text) = await MapReader.ReadAsync(_ctx.Ocr, frame);
+            var state = game.Minimap ?? MinimapState.NotFound;
+            var text = state is MinimapState.Full or MinimapState.Collapsed ? game.Location : null;
             if (!string.IsNullOrWhiteSpace(text)) { S.Location = S.AutoLocation = text; notes.Add("Location read."); }
             else notes.Add(state switch
             {
@@ -1023,7 +1073,7 @@ public sealed class SaleCardEngine
                 _ => "Couldn't read the map name, so type the location in.",
             });
         }
-        var channel = ChannelReader.Read(frame);
+        var channel = game.Channel;
         if (channel != null) { S.Channel = channel.ToString()!; notes.Add($"Channel {channel} read."); }
         else if (string.IsNullOrWhiteSpace(S.Channel)) notes.Add("For the channel: open the Change Channel window in the game and press this again, or type it in.");
         if (overwrite)
@@ -1447,6 +1497,50 @@ public sealed class SaleCardEngine
         return m.Success ? long.Parse(m.Groups[1].Value) * (m.Groups[2].Success ? long.Parse(m.Groups[2].Value) : 1) : null;
     }
 
+    /// <summary>How many of an item fit in one slot, for items whose stacks the card merges; 0 for the rest.</summary>
+    /// <remarks>
+    /// Use items (potions) stack to 100. Etc items stack to 200, except ores and what they refine into (401xxxx ores and
+    /// plates, 402xxxx jewel ores and jewels, 4004xxx crystal ores, 4005xxx crystals), which stack to 100. Stars and bullets
+    /// are sold by the set, and equipment never stacks.
+    /// </remarks>
+    static int StackMax(int id) => (id / 1000000) switch
+    {
+        2 when !SoldBySet(id) => 100,
+        4 => id / 10000 is 401 or 402 || id / 1000 is 4004 or 4005 ? 100 : 200,
+        _ => 0,
+    };
+
+    /// <summary>
+    /// One tile per item for what stacks: every ticked card of it (inventory and storage, any stack size) adds up, shown
+    /// as full stacks and the rest: 254 Tree Branches is "200" and "54", 146 Bronze Ore "100" and "46". The list keeps its cards.
+    /// The price is the first one you typed on any of them. A card whose quantity box isn't a count is left on its own.
+    /// </summary>
+    static List<SaleItem> MergeStacks(List<SaleItem> chosen)
+    {
+        var result = new List<SaleItem>();
+        var done = new HashSet<int>();
+        foreach (var item in chosen)
+        {
+            int max = StackMax(item.ItemId);
+            if (item.ItemId == 0 || max == 0 || Count(item.Qty) == null) { result.Add(item); continue; }
+            if (!done.Add(item.ItemId)) continue;
+            var group = chosen.Where(i => i.ItemId == item.ItemId && Count(i.Qty) != null).ToList();
+            long total = group.Sum(i => Count(i.Qty)!.Value);
+            long full = total / max, rest = total % max;
+            string custom = group.Select(i => i.Custom).FirstOrDefault(c => !string.IsNullOrWhiteSpace(c)) ?? "";
+            int percent = group.Select(i => i.PricePercent).FirstOrDefault(p => p != 100, 100);
+            SaleItem Tile(string qty, int stacks)
+            {
+                var t = item.CardCopy();
+                t.Qty = qty; t.Stacks = stacks; t.Custom = custom; t.PricePercent = percent;
+                return t;
+            }
+            if (full > 0) result.Add(Tile(full > 1 ? $"{max} ×{full}" : $"{max}", (int)full));
+            if (rest > 0) result.Add(Tile(rest.ToString(), 1));
+        }
+        return result;
+    }
+
     /// <summary>The card's tiles in the chosen order. Ties keep the order the items were found in.</summary>
     List<SaleItem> InOrder(List<SaleItem> chosen)
     {
@@ -1468,43 +1562,77 @@ public sealed class SaleCardEngine
     /// </summary>
     public (List<SaleItem> items, CardOptions options) Card()
     {
-        var selling = S.HideSelling ? new List<SaleItem>() : Items.Where(i => i.Include && i.Tab != BuyTab && InTab(i, S.Tab)).ToList();
+        var selling = S.HideSelling ? new List<SaleItem>() : MergeStacks(Items.Where(i => i.Include && i.Tab != BuyTab && InTab(i, S.Tab)).ToList());
         var buying = S.HideBuying ? new List<SaleItem>() : Items.Where(i => i.Include && i.Tab == BuyTab).ToList();
+        // What you sell: its kind's adjustment and its own, applied with the card's slider (prices, discount tags, totals).
+        foreach (var i in selling) i.CardScale = KindPercent(i.Category) / 100.0 * i.PricePercent / 100.0;
+        foreach (var i in buying) i.CardScale = 1;
         var chosen = selling.Concat(buying).ToList();
         // Total: price each × quantity (× sets for stars and bullets). Items with no price ("Offer") are counted apart.
         string total = "", totalNote = "";
+        var kindTotals = new List<(string, string)>();
         double priceScale = Math.Clamp(S.PricePercent, 1, 200) / 100.0;   // the price slider, on the total too
         if (!S.NoTotal && S.PricesShown)
         {
             long sum = 0; int priced = 0, offers = 0;
+            var byKind = new Dictionary<string, long>();
             // what you are selling: items marked Buying are not part of the total
             foreach (var i in chosen.Where(i => !i.Buying))
             {
                 long? each = !string.IsNullOrWhiteSpace(i.Custom) ? Mesos.Parse(i.Custom) : i.RateValue;
-                if (each is long p) { p = Math.Max(1, (long)Math.Round(p * priceScale, MidpointRounding.AwayFromZero)); sum += p * (i.IsEquipment ? 1 : SoldBySet(i.ItemId) ? Sets(i.Qty) : Count(i.Qty) ?? 1); priced++; } else offers++;
+                if (each is long p)
+                {
+                    p = Math.Max(1, (long)Math.Round(p * priceScale * i.CardScale, MidpointRounding.AwayFromZero));
+                    long worth = p * (i.IsEquipment ? 1 : SoldBySet(i.ItemId) ? Sets(i.Qty) : Count(i.Qty) ?? 1);
+                    sum += worth; priced++;
+                    byKind[i.Category] = byKind.GetValueOrDefault(i.Category) + worth;
+                }
+                else offers++;
             }
             if (priced > 0)
             {
                 total = Mesos.Format(sum) + (S.Obo ? " OBO" : "");
                 totalNote = offers > 0 && !S.HideOffer ? $"+ {offers} by offer" : "";
             }
+            // Split by kind only when there is more than one: a single kind's total is the total.
+            if (!S.NoKindTotals && byKind.Count > 1)
+                kindTotals = byKind.OrderBy(k => KindRank(k.Key)).Select(k => (k.Key, Mesos.Format(k.Value))).ToList();
         }
-        string credit = S.PricesShown && chosen.Any(i => i.FromSite && string.IsNullOrWhiteSpace(i.Custom))
-            ? "prices: " + string.Join(", ", new[] { (PriceSites.Meso, "meso.watch"), (PriceSites.Cozy, "cozy.markets"), (PriceSites.Nia, "meowdb.com"), (PriceSites.Classic, "maplestory-classic.com") }
-                .Where(s => S.SourceOn(s.Item1)).Select(s => s.Item2)) : "";
+        // The price sites are not credited in the footer: the card shows your prices, wherever they came from.
         var options = new CardOptions
         {
             Title = S.Title, Seller = S.Seller, Server = S.Server, Channel = S.Channel, Location = S.MapNameHidden ? "" : S.Location, Tagline = S.Tagline ?? "",
             Avatar = S.NoAvatar ? null : AvatarFor(S.Seller), Map = S.NoMap ? null : CardMap(), MapScale = Math.Clamp(S.MapScale, 40, 100) / 100.0,
             Prices = S.PricesShown, Obo = S.Obo, HideOffer = S.HideOffer, Compact = S.CompactTiles, Stats = !S.NoStats,
-            Total = total, TotalNote = totalNote, Credit = credit, PriceScale = priceScale,
+            Total = total, TotalNote = totalNote, PriceScale = priceScale, Groups = !S.NoGroups, KindTotals = kindTotals,
             Theme = Math.Max(0, Array.FindIndex(CardRenderer.Themes, t => t.Name == S.Theme)),
             ShowTime = !S.NoTime, Zone = S.LocalTime ? S.Zone : "",
             ShopMarker = !S.NoShopMarker, Discord = S.Discord ?? "", SellerMarker = !S.NoSellerMarker, Each = !S.NoEach, Pack = !S.NoPack, TradeTags = !S.NoTradeTags,
+            DiscountTags = !S.NoDiscountTags,
+            TagColours = new CardRenderer.TagColours(S.SaleTagColour ?? CardRenderer.TagColours.SaleDefault, S.BuyTagColour ?? CardRenderer.TagColours.BuyDefault,
+                S.ShopTagColour ?? CardRenderer.TagColours.ShopDefault, S.DiscountTagColour ?? CardRenderer.TagColours.DiscountDefault),
             MarkerColours = new CardRenderer.MarkerColours(S.MarkerRing ?? "#E5332A", S.MarkerTagColour ?? "#E5332A", S.MarkerText ?? "#FFFFFF"), MarkerTag = S.MarkerTag,
         };
-        return (InOrder(selling).Concat(InOrder(buying)).ToList(), options);
+        // Grouped: the kinds in their usual order, the chosen order kept inside each (OrderBy keeps ties in place).
+        var sold = InOrder(selling);
+        if (!S.NoGroups) sold = sold.OrderBy(i => KindRank(i.Category)).ToList();
+        return (sold.Concat(InOrder(buying)).ToList(), options);
     }
+
+    /// <summary>A kind's price adjustment in percent (100 when it has none).</summary>
+    public int KindPercent(string kind) => S.KindPercent.TryGetValue(kind, out int p) ? Math.Clamp(p, 1, 200) : 100;
+
+    /// <summary>Sets a kind's price adjustment; 100 removes it.</summary>
+    public void SetKindPercent(string kind, int percent)
+    {
+        percent = Math.Clamp(percent, 1, 200);
+        if (percent == KindPercent(kind)) return;
+        if (percent == 100) S.KindPercent.Remove(kind); else S.KindPercent[kind] = percent;
+        SettingsChanged();
+    }
+
+    /// <summary>Where a kind of item comes in the card's grouping (Weapons first … Unknown last).</summary>
+    static int KindRank(string kind) { int k = Array.IndexOf(Categories.Order, kind); return k < 0 ? Categories.Order.Length : k; }
 
     // ---------------------------------------------------------------- buying
 

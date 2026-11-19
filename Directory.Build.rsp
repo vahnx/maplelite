@@ -1,0 +1,6 @@
+# Read by MSBuild for every build in this repo (dotnet build, dotnet run, dotnet test).
+# One build node: Core and Sdk are built under more than one set of global properties (the Host's own references,
+# and again by its bundled-plugin step), and two nodes compiling the same project at once overwrite each other's
+# obj files ("Could not copy MapleLite.Core.dll because it was not found"). One node builds them one after another.
+-maxCpuCount:1
+-nodeReuse:false

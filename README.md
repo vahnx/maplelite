@@ -106,9 +106,10 @@ dotnet test
 dotnet run --project src/MapleLite.Host -f net8.0-windows10.0.19041.0
 ```
 
-Build output goes outside the source tree, to `%LOCALAPPDATA%\MapleLite-build` (this folder is synced by Google Drive,
-which locks freshly written build files). After a build you can also start the app directly from
-`%LOCALAPPDATA%\MapleLite-build\bin\MapleLite.Host\debug_net8.0-windows10.0.19041.0\MapleLite.exe`.
+Build output goes outside the source tree, to `%LOCALAPPDATA%\MapleLite-build\<repo folder>` (this folder is synced by
+Google Drive, which locks freshly written build files; each checkout or worktree gets its own subfolder so they can't
+overwrite each other). After a build you can also start the app directly from
+`%LOCALAPPDATA%\MapleLite-build\MapleLite\bin\MapleLite.Host\debug_net8.0-windows10.0.19041.0\MapleLite.exe`.
 
 To make a standalone copy that runs on any 64-bit Windows 10/11 PC without .NET installed:
 
@@ -181,7 +182,9 @@ Set `MAPLELITE_DATA` to a scratch folder to keep test runs away from your real s
 
 Reference `MapleLite.Sdk`, implement `IPlugin`, and build to `plugins/<Name>/<Name>.dll`. Each plugin loads in
 its own `AssemblyLoadContext`; Core, Sdk and Avalonia come from the host. Use `context.Frames.Subscribe` for
-frames (keep the callback short), `context.Ocr` for text, `context.Storage` for data, and the `PanelKit`
+frames (keep the callback short), `context.Game` for what MapleLite already reads for everyone (map and
+location with room, minimap size, channel, IGN, HP, MP, EXP: take these from here rather than reading them
+yourself), `context.Ocr` for text, `context.Storage` for data, and the `PanelKit`
 helpers or `ml.*` resources for a page that follows the theme. Third-party plugins will come through a
 reviewed hub that builds them from source.
 

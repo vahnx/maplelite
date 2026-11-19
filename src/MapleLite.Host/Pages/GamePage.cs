@@ -80,10 +80,20 @@ internal sealed class GamePage : UserControl
         _recTimer.Tick += (_, _) => ShowRecording();
 
         _previewHost = new Border { Child = _preview, MinHeight = 200, IsVisible = s_previewExpanded }.Res(Border.BackgroundProperty, ThemeTokens.Background);
-        _previewToggle = Ui.Button(s_previewExpanded ? "Collapse" : "Expand", TogglePreview);
-        var previewCard = Ui.Card(Ui.Stack(10,
-            Ui.Row(8, Ui.Subheading("Game window"), _previewToggle),
-            _previewHost), 8);
+        // The heading on the left and an arrow at the right edge, both centred on the same line: ▲ hides the picture, ▼ shows it.
+        _previewToggle = Ui.Button("", TogglePreview);
+        _previewToggle.Width = 32; _previewToggle.Height = 28; _previewToggle.Padding = new Thickness(0);
+        _previewToggle.HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center; _previewToggle.VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center;
+        _previewToggle.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center;
+        ShowPreviewToggle();
+        var previewTitle = Ui.Subheading("Game window");
+        previewTitle.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center;
+        // inset to line up with the text of the other cards (16 in from their edge; this card's padding is 8)
+        var previewHead = new DockPanel { Margin = new Thickness(8, 0, 0, 0) };
+        DockPanel.SetDock(_previewToggle, Dock.Right);
+        previewHead.Children.Add(_previewToggle);
+        previewHead.Children.Add(previewTitle);
+        var previewCard = Ui.Card(Ui.Stack(10, previewHead, _previewHost), 8);
 
         var statusRow = Ui.Row(10, _dot, _state);
         var content = Ui.Stack(18,
@@ -116,10 +126,17 @@ internal sealed class GamePage : UserControl
     {
         s_previewExpanded = !s_previewExpanded;
         _previewHost.IsVisible = s_previewExpanded;
-        _previewToggle.Content = s_previewExpanded ? "Collapse" : "Expand";
+        ShowPreviewToggle();
         // Only take preview frames while the picture is on screen, so a hidden preview costs nothing.
         if (s_previewExpanded) StartPreview();
         else { _sub?.Dispose(); _sub = null; }
+    }
+
+    /// <summary>The toggle's arrow and tooltip for the picture's state: ▲ to collapse it while shown, ▼ to expand it while hidden.</summary>
+    void ShowPreviewToggle()
+    {
+        _previewToggle.Content = s_previewExpanded ? "▲" : "▼";
+        ToolTip.SetTip(_previewToggle, s_previewExpanded ? "Hide the game picture" : "Show the game picture");
     }
 
     void StartPreview() =>

@@ -34,6 +34,9 @@ public sealed record CardOptions
     public bool Pack { get; init; } = true;
     /// <summary>Tag each tile SALE (pink) or BUYING (blue).</summary>
     public bool TradeTags { get; init; } = true;
+    /// <summary>Tag each priced item you sell with its discount ("-20%") when <see cref="PriceScale"/> is below 1.</summary>
+    public bool DiscountTags { get; init; } = true;
+    public CardRenderer.TagColours TagColours { get; init; } = new();
     public bool Prices { get; init; } = true;
     public bool Obo { get; init; }
     public bool HideOffer { get; init; }
@@ -43,6 +46,10 @@ public sealed record CardOptions
     public double PriceScale { get; init; } = 1;
     public string Total { get; init; } = "";
     public string TotalNote { get; init; } = "";
+    /// <summary>Tiles in groups by kind, each under a divider in the scheme's accent colour, labelled with the kind.</summary>
+    public bool Groups { get; init; } = true;
+    /// <summary>The total split by kind, in card order ("Armor", "200k"); shown above the overall total. Empty: overall only.</summary>
+    public IReadOnlyList<(string Kind, string Total)> KindTotals { get; init; } = Array.Empty<(string, string)>();
     public string Credit { get; init; } = "";
     public int Theme { get; init; }
     public bool ShowTime { get; init; } = true;
@@ -116,6 +123,20 @@ public static class CardRenderer
 
     /// <summary>The Seller location marker's colours: the ring and arrow, the name tag, and the tag's text ("#RRGGBB").</summary>
     public sealed record MarkerColours(string Ring = "#E5332A", string Tag = "#E5332A", string Text = "#FFFFFF");
+
+    /// <summary>The item tags' colours ("#RRGGBB"): SALE, BUYING, IN SHOP and the discount tag.</summary>
+    public sealed record TagColours(string Sale = TagColours.SaleDefault, string Buy = TagColours.BuyDefault,
+        string Shop = TagColours.ShopDefault, string Discount = TagColours.DiscountDefault)
+    {
+        public const string SaleDefault = "#FF4FA3", BuyDefault = "#2F7DF6", ShopDefault = "#2E9B4F", DiscountDefault = "#FF8A00";
+    }
+
+    /// <summary>The discount tag's text for a price slider at <paramref name="scale"/> ("-20%"), or null when nothing is taken off.</summary>
+    public static string? DiscountText(double scale)
+    {
+        int off = (int)Math.Round((1 - scale) * 100, MidpointRounding.AwayFromZero);
+        return off >= 1 ? $"-{off}%" : null;
+    }
 
     static IBrush Brush(string hex, string fallback)
     {
@@ -242,6 +263,9 @@ public static class CardRenderer
                          || place.Count > 0 || pills || !string.IsNullOrWhiteSpace(o.Location);
 
         bool hasMap = o.Map != null && hasSeller;
+        // Groups by kind: the items arrive sorted by kind; a new kind starts a new group under its own divider.
+        static string Kind(SaleItem it) => it.IsWanted ? "Buying" : it.Category == Categories.Unknown ? "Other" : it.Category;
+        bool grouped = o.Groups && items.Select(Kind).Distinct().Count() > 1;
         int count = items.Count + (hasSeller ? 1 : 0) + (hasMap ? 2 : 0);
         int cols = count <= 4 ? Math.Max(count, 2) : count <= 12 ? 4 : count <= 30 ? 5 : 6;
         if (hasMap) cols = Math.Max(cols, 4);
@@ -321,6 +345,26 @@ public static class CardRenderer
             {
                 who.Children.Add(new Border { Height = 1, Background = Line, Margin = new Thickness(30, 10, 30, 8) });
                 var head = Words("TOTAL", Muted, 11); head.TextAlignment = TextAlignment.Center; who.Children.Add(head);
+                // Split by kind: one line each (the kind on the left, its total on the right), the overall total under them.
+                // With the tiles in groups, each kind's total sits on its divider instead, beside the kind's name.
+                if (o.KindTotals.Count > 0 && !grouped)
+                {
+                    var lines = new StackPanel { Margin = new Thickness(4, 4, 4, 2) };
+                    foreach (var (kind, amount) in o.KindTotals)
+                    {
+                        var line = new DockPanel { Margin = new Thickness(0, 1, 0, 1) };
+                        var value = Words(amount, Gold, 13, FontWeight.Bold);
+                        value.Margin = new Thickness(8, 0, 0, 0);
+                        DockPanel.SetDock(value, Dock.Right);
+                        line.Children.Add(value);
+                        var label = Words(kind, Text, 12.5);
+                        label.TextTrimming = TextTrimming.CharacterEllipsis; label.VerticalAlignment = VerticalAlignment.Center;
+                        line.Children.Add(label);
+                        lines.Children.Add(line);
+                    }
+                    who.Children.Add(lines);
+                    who.Children.Add(new Border { Height = 1, Background = Line, Margin = new Thickness(30, 4, 30, 4) });
+                }
                 var sum = Words(o.Total, Gold, 22, FontWeight.Bold); sum.TextAlignment = TextAlignment.Center; who.Children.Add(sum);
                 if (o.TotalNote.Length > 0)
                 {
@@ -396,7 +440,7 @@ public static class CardRenderer
             Child = Words("×" + it.Qty.Trim(), BadgeFg, size, FontWeight.Bold),
         };
         // Live in your Free Market shop: a green tag on the icon (green in every colour scheme, so it reads the same).
-        IBrush ShopGreen = new SolidColorBrush(Color.Parse("#2E9B4F"));
+        IBrush ShopGreen = Brush(o.TagColours.Shop, TagColours.ShopDefault);
         bool marked = o.ShopMarker && items.Any(i => i.InShop);
         Border ShopTag(double size) => new()
         {
@@ -405,7 +449,7 @@ public static class CardRenderer
             Child = Words("IN SHOP", Brushes.White, size, FontWeight.Bold),
         };
         // Sale or Buying: a pink or blue tag on the icon's top-right corner (the IN SHOP tag has the top-left)
-        IBrush SalePink = new SolidColorBrush(Color.Parse("#FF4FA3")), BuyBlue = new SolidColorBrush(Color.Parse("#2F7DF6"));
+        IBrush SalePink = Brush(o.TagColours.Sale, TagColours.SaleDefault), BuyBlue = Brush(o.TagColours.Buy, TagColours.BuyDefault);
         Border TradeTag(SaleItem it, double size, bool shopTagToo) => new()
         {
             Background = it.Buying ? BuyBlue : SalePink, CornerRadius = new CornerRadius(4), Padding = new Thickness(4, 0, 4, 1),
@@ -414,9 +458,22 @@ public static class CardRenderer
             Child = Words(it.Buying ? "BUYING" : "SALE", Brushes.White, size, FontWeight.Bold),
         };
         bool ShowPrice(SaleItem it) => o.Prices && !(o.HideOffer && it.FinalPrice == "Offer");
+        // The discount ("-20%") while the price slider is below 100%: on priced items you sell, in the top corner the
+        // IN SHOP tag leaves free (top-left, or top-right when IN SHOP has the left and SALE moved down).
+        IBrush DiscountOrange = Brush(o.TagColours.Discount, TagColours.DiscountDefault);
+        // each tile's own: the card's slider with its kind's and its own adjustment
+        string? Discount(SaleItem it) => o.DiscountTags ? DiscountText(o.PriceScale * it.CardScale) : null;
+        Border? DiscountTag(SaleItem it, double size, bool shopTagToo) =>
+            Discount(it) is not { } discount || it.Buying || !ShowPrice(it) || it.FinalPrice == "Offer" ? null : new Border
+            {
+                Background = DiscountOrange, CornerRadius = new CornerRadius(4), Padding = new Thickness(4, 0, 4, 1),
+                HorizontalAlignment = shopTagToo ? HorizontalAlignment.Right : HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
+                Margin = shopTagToo ? new Thickness(0, -5, -5, 0) : new Thickness(-5, -5, 0, 0),
+                Child = Words(discount, Brushes.White, size, FontWeight.Bold),
+            };
         // "ea" where the card holds more than one, so "×2 · 9,999" reads as 9,999 each, not for both
         static string Scaled(SaleItem it, double scale) => Mesos.Scaled(it.FinalPrice, scale);
-        string PriceText(SaleItem it) => Scaled(it, o.PriceScale) + (o.Each && it.FinalPrice != "Offer" && it.Pieces > 1 ? " ea" : "") + (o.Obo && it.FinalPrice != "Offer" ? " OBO" : "");
+        string PriceText(SaleItem it) => Scaled(it, o.PriceScale * it.CardScale) + (o.Each && it.FinalPrice != "Offer" && it.Pieces > 1 ? " ea" : "") + (o.Obo && it.FinalPrice != "Offer" ? " OBO" : "");
 
         // A short tile: the icon on the left, the name and price to its right; equipment stats underneath.
         Control Compact(SaleItem it)
@@ -429,6 +486,7 @@ public static class CardRenderer
             if (it.ShowsQty) tile.Children.Add(Badge(it, 11, new Thickness(4, 0, 4, 1), 5, 5));
             if (marked && it.InShop) tile.Children.Add(ShopTag(8.5));
             if (o.TradeTags) tile.Children.Add(TradeTag(it, 8.5, marked && it.InShop));
+            if (DiscountTag(it, 8.5, marked && it.InShop) is { } off85) tile.Children.Add(off85);
             var words = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0) };
             var name = Words(it.Name, Text, 12.5);
             name.TextWrapping = TextWrapping.Wrap; name.MaxHeight = 34; name.TextTrimming = TextTrimming.CharacterEllipsis;
@@ -471,6 +529,7 @@ public static class CardRenderer
             if (it.ShowsQty) tile.Children.Add(Badge(it, 12, new Thickness(5, 1, 5, 2), 6, 6));
             if (marked && it.InShop) tile.Children.Add(ShopTag(9.5));
             if (o.TradeTags) tile.Children.Add(TradeTag(it, 9.5, marked && it.InShop));
+            if (DiscountTag(it, 9.5, marked && it.InShop) is { } off95) tile.Children.Add(off95);
             card.Children.Add(tile);
             var name = Words(it.Name, Text, 12.5);
             name.TextAlignment = TextAlignment.Center; name.TextWrapping = TextWrapping.Wrap; name.MaxHeight = 34; name.Height = 34;
@@ -500,14 +559,40 @@ public static class CardRenderer
                 Padding = new Thickness(8, 12, 8, 6), Margin = new Thickness(0, 0, gap, gap), Child = card,
             });
         }
-        if (o.Pack)
+        // A divider: the kind's name in the accent colour and, with totals by kind, the kind's total beside it; then a
+        // thin line in the same colour to the right edge.
+        Control Divider(string kind, double width)
+        {
+            var row = new DockPanel { Width = width, Margin = new Thickness(0, 2, 0, gap) };
+            var label = Words(kind.ToUpperInvariant(), Gold, 12, FontWeight.Bold);
+            label.VerticalAlignment = VerticalAlignment.Center; label.Margin = new Thickness(2, 0, 10, 0);
+            DockPanel.SetDock(label, Dock.Left);
+            row.Children.Add(label);
+            string kindOf = kind == "Other" ? Categories.Unknown : kind;
+            if (o.KindTotals.FirstOrDefault(k => k.Kind == kindOf) is { Total: { Length: > 0 } amount })
+            {
+                var sum = new Border
+                {
+                    Background = Gold, CornerRadius = new CornerRadius(8), Padding = new Thickness(8, 1, 8, 2), Margin = new Thickness(0, 0, 10, 0),
+                    VerticalAlignment = VerticalAlignment.Center, Child = Words(amount, Bg, 13, FontWeight.Bold),
+                };
+                DockPanel.SetDock(sum, Dock.Left);
+                row.Children.Add(sum);
+            }
+            row.Children.Add(new Border { Height = 1.5, Background = Gold, Opacity = 0.55, VerticalAlignment = VerticalAlignment.Center, CornerRadius = new CornerRadius(1) });
+            return row;
+        }
+        if (o.Pack || grouped)
         {
             // Packed: every tile goes to the top of whichever column is shortest so far (the leftmost of equal ones), at
             // its own height. Tall equipment and short stacks then nest without gaps, and nothing is stretched. The
             // seller card and the map keep the top-left corner; the columns under them start below them.
+            // Grouped, each group starts under everything above it, below a divider across the card; the first group's
+            // divider sits beside the seller card and map instead, over the columns they leave free.
             var canvas = new Canvas { Margin = grid.Margin, Width = grid.Width };
             var heights = new double[cols];
             double cornerH = firstRow;
+            int cornerCols = mapBox != null ? 3 : sellerBox != null ? 1 : 0;
             if (sellerBox != null)
             {
                 grid.Children.Remove(sellerBox);
@@ -523,8 +608,22 @@ public static class CardRenderer
                 canvas.Children.Add(mapBox);
                 heights[1] = heights[2] = cornerH;
             }
-            foreach (var tile in tiles)
+            string? group = null;
+            for (int n = 0; n < tiles.Count; n++)
             {
+                var tile = tiles[n];
+                if (grouped && Kind(items[n]) != group)
+                {
+                    group = Kind(items[n]);
+                    bool besideCorner = n == 0 && cornerCols > 0 && cornerCols < cols;
+                    int from = besideCorner ? cornerCols : 0;
+                    double top = n == 0 && !besideCorner ? (cornerCols >= cols ? cornerH : 0) : n == 0 ? 0 : heights.Max();
+                    var divider = Divider(group, (cols - from) * (cardW + gap) - gap);
+                    Canvas.SetLeft(divider, from * (cardW + gap)); Canvas.SetTop(divider, top);
+                    canvas.Children.Add(divider);
+                    double under = top + Tall(divider) + gap;
+                    for (int k = from; k < cols; k++) heights[k] = Math.Max(heights[k], under);
+                }
                 tile.VerticalAlignment = VerticalAlignment.Top;
                 int c = 0;
                 for (int k = 1; k < cols; k++) if (heights[k] < heights[c] - 0.5) c = k;

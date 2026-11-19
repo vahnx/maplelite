@@ -20,7 +20,8 @@ param(
 $ErrorActionPreference = 'Continue'
 $repo   = Split-Path -Parent $PSScriptRoot
 $build  = Join-Path $env:LOCALAPPDATA 'MapleLite-build'
-$exe    = Join-Path $build 'bin\MapleLite.Host\release_net8.0-windows10.0.19041.0\MapleLite.exe'
+# Each checkout builds into its own subfolder, named after the repo folder (see Directory.Build.props).
+$exe    = Join-Path $build ((Split-Path -Leaf $repo) + '\bin\MapleLite.Host\release_net8.0-windows10.0.19041.0\MapleLite.exe')
 $log    = Join-Path $build 'launcher.log'
 $Host.UI.RawUI.WindowTitle = 'MapleLite launcher'
 New-Item -ItemType Directory -Force $build | Out-Null

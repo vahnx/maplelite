@@ -46,7 +46,7 @@ public sealed class SpawnTimerPlugin : IPlugin
         _ctx = context;
         _settings = context.Storage.Load<SpawnSettings>("settings");
         ApplyRule();
-        _finder = new PlayerFinder(context.Ocr);
+        _finder = new PlayerFinder(context.Ocr, () => context.Game.Ign);
         _frames = context.Frames.Subscribe(OnFrame, FrameFps);
         _exp = context.Events.Subscribe<ExpGainedEvent>(e =>
         {

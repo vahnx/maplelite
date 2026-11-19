@@ -15,14 +15,18 @@
   </PropertyGroup>
   <!--
     Build output (bin/obj) goes outside the source folder: this folder is synced by Google Drive, which
-    locks freshly written build files and breaks builds. On Windows it goes to %LOCALAPPDATA%/MapleLite-build;
-    elsewhere to ./artifacts (gitignored). Override with -p:ArtifactsPath=...
+    locks freshly written build files and breaks builds. On Windows it goes to
+    %LOCALAPPDATA%/MapleLite-build/<checkout folder> (MapleLite-build/MapleLite for the main checkout), so each copy of
+    the repo (a git worktree, a second clone) has its own: two copies sharing one folder overwrite each other's DLLs and
+    the app fails to start with "Method not found". Elsewhere it goes to ./artifacts (gitignored). Override with
+    -p:ArtifactsPath=...
   -->
   <PropertyGroup>
     <UseArtifactsOutput>true</UseArtifactsOutput>
     <!-- Multiple project-reference builds can otherwise race over shared artifacts in LocalAppData. -->
     <BuildInParallel>false</BuildInParallel>
-    <ArtifactsPath Condition="'$(ArtifactsPath)' == '' and '$(LOCALAPPDATA)' != ''">$(LOCALAPPDATA)/MapleLite-build</ArtifactsPath>
+    <_MapleLiteCheckout>$([System.IO.Path]::GetFileName($([System.IO.Path]::GetDirectoryName($(MSBuildThisFileDirectory)))))</_MapleLiteCheckout>
+    <ArtifactsPath Condition="'$(ArtifactsPath)' == '' and '$(LOCALAPPDATA)' != ''">$(LOCALAPPDATA)/MapleLite-build/$(_MapleLiteCheckout)</ArtifactsPath>
     <ArtifactsPath Condition="'$(ArtifactsPath)' == ''">$(MSBuildThisFileDirectory)artifacts</ArtifactsPath>
   </PropertyGroup>
 </Project>

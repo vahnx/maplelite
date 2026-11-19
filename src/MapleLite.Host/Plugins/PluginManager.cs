@@ -316,7 +316,8 @@ internal sealed class PluginContext : IPluginContext
     public PluginManifest Manifest { get; }
     public IOcr Ocr => _shell.Ocr;
     public IFrameSource Frames => _frames;
-    public MapleLite.Core.Game.IMapSource Map => _shell.Map;
+    public MapleLite.Core.Game.IMapSource Map => _shell.Game;
+    public MapleLite.Core.Game.IGameState Game => _shell.Game;
     public IPluginStorage Storage { get; }
     public IThemeService Themes => _shell.Themes;
     public IEventBus Events => _events;

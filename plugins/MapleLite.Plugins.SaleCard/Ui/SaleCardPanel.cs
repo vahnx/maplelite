@@ -35,6 +35,8 @@ internal sealed class SaleCardPanel : UserControl
     readonly ComboBox _show = new() { Width = 170 };
     readonly WrapPanel _tabs = new();
     readonly WrapPanel _kinds = new();
+    readonly WrapPanel _kindPrices = new();
+    string _kindPricesFor = "\0";   // the kinds the sliders were last built for
     readonly TextBlock _shopNote = Muted("Saved shop listings: scroll your own shop to read more. Uncheck sold or outdated items before sharing.");
     readonly Image _preview = new() { Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly, VerticalAlignment = VerticalAlignment.Top };
     readonly TextBlock _status = Muted(""), _browserStatus = Muted(""), _gameLine = Muted(""), _sellerLine = Text("", ThemeTokens.Text, 16, FontWeight.SemiBold);
@@ -167,7 +169,9 @@ internal sealed class SaleCardPanel : UserControl
         var listBox = Card(listDock, 0);
 
         var kinds = new Expander { Header = "Kinds of item on the card", Content = Stack(4,
-            Muted("Include or remove whole groups; individual items can still be changed below."), _kinds) };
+            Muted("Include or remove whole groups; individual items can still be changed below."), _kinds,
+            Muted("Price % by kind: raises or lowers the card price of every item of that kind, on top of the card's slider. Each item's own Price % applies on top of this."),
+            _kindPrices) };
         _shopNote.TextWrapping = TextWrapping.Wrap;
         var head = Stack(8, filterRow, _tabs, _shopNote, kinds);
         head.Margin = new Thickness(0, 0, 0, 10);
@@ -180,7 +184,17 @@ internal sealed class SaleCardPanel : UserControl
         return dock;
     }
 
-    /// <summary>One item: tick, icon, name and going rate, quantity, price, and a chevron for name, stats, slots and links.</summary>
+    /// <summary>A price-percent slider (1–200%) with its figure beside it, as a button that can put it back to 100%.</summary>
+    static (StackPanel panel, Slider slider, Button label) PercentSlider(double width, string sliderTip, string labelTip)
+    {
+        var slider = new Slider { Minimum = 1, Maximum = 200, Value = 100, TickFrequency = 1, IsSnapToTickEnabled = true, Width = width, VerticalAlignment = VerticalAlignment.Center };
+        var label = new Button { Content = "100%", MinWidth = 50, Padding = new Thickness(4, 2), FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+        ToolTip.SetTip(slider, sliderTip);
+        ToolTip.SetTip(label, labelTip);
+        return (new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center, Children = { slider, label } }, slider, label);
+    }
+
+    /// <summary>One item: tick, icon, name and going rate, price %, quantity, price, and a chevron for name, stats, slots and links.</summary>
     Control Row()
     {
         TextBox Box(string path, double width, string watermark, string tip)
@@ -203,8 +217,20 @@ internal sealed class SaleCardPanel : UserControl
         var price = Box(nameof(SaleItem.Custom), 86, "price", "Your price. Leave it blank to use the going rate (or Offer when there is none), or click a figure under the name to put it here.");
         var more = new ToggleButton { Content = "▾", Margin = new Thickness(6, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
         ToolTip.SetTip(more, "Name, stats and slots");
-        var line = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto,Auto,Auto") };
-        foreach (var (c, i) in new Control[] { include, tile, words, qty, price, more }.Select((c, i) => (c, i))) { Grid.SetColumn(c, i); line.Children.Add(c); }
+        var adjust = PercentSlider(80,
+            "Raises or lowers this item's price on the card (and in the total) by a percent, on top of its kind's and the card's slider. Your list keeps its price.",
+            "This item's price on the card as a percent. Click to put it back to 100%.");
+        adjust.panel.Margin = new Thickness(8, 0, 0, 0);
+        bool settingPercent = false;
+        adjust.slider.ValueChanged += (_, _) =>
+        {
+            int pct = (int)Math.Round(adjust.slider.Value);
+            adjust.label.Content = pct + "%";
+            if (!settingPercent && adjust.slider.DataContext is SaleItem it && it.PricePercent != pct) it.PricePercent = pct;
+        };
+        adjust.label.Click += (_, _) => adjust.slider.Value = 100;
+        var line = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto,Auto,Auto,Auto") };
+        foreach (var (c, i) in new Control[] { include, tile, words, adjust.panel, qty, price, more }.Select((c, i) => (c, i))) { Grid.SetColumn(c, i); line.Children.Add(c); }
         price.Margin = new Thickness(6, 0, 0, 0); qty.Margin = new Thickness(8, 0, 0, 0);
 
         // details: name, stats, slots, read tooltip, look it up
@@ -258,6 +284,9 @@ internal sealed class SaleCardPanel : UserControl
         border.DataContextChanged += (_, _) =>
         {
             var it = border.DataContext as SaleItem;
+            settingPercent = true;
+            adjust.slider.Value = it?.PricePercent ?? 100;
+            settingPercent = false;
             equip.IsVisible = it is { IsEquipment: true } or { IsScroll: true };
             // scrolls have a success rate and an effect, not upgrade slots
             slotsLabel.IsVisible = slots.IsVisible = it is { IsEquipment: true };
@@ -475,14 +504,18 @@ internal sealed class SaleCardPanel : UserControl
             _sortButtons.Add((b, key, label));
             return b;
         }
-        // same columns as a row: tick, icon, name, qty (70 + 8), price (96 + 6), chevron
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("30,52,*,64,92,28"), Margin = new Thickness(18, 8, 10, 0) };
+        // same columns as a row: tick, icon, name, price % (8 + 80 + 4 + 50), qty (70 + 8), price (96 + 6), chevron
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("30,52,*,142,64,92,28"), Margin = new Thickness(18, 8, 10, 0) };
+        var adjustHead = new TextBlock { Text = "Price %", FontSize = 12, Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center }
+            .Themed(TextBlock.ForegroundProperty, ThemeTokens.TextMuted);
+        ToolTip.SetTip(adjustHead, "Each item's own price adjustment on the card, on top of its kind's (Kinds of item on the card) and the card's slider");
         var cells = new (Control c, int col, int span)[]
         {
             (Head("on", "✓", "Sort by whether the item is on the card", HorizontalAlignment.Left), 0, 1),
             (Head("name", "Name", "Sort by name", HorizontalAlignment.Left), 1, 2),
-            (Head("qty", "Qty", "Sort by quantity", HorizontalAlignment.Left), 3, 1),
-            (Head("price", "Price", "Sort by price: the one you typed, else the going rate; Offer last", HorizontalAlignment.Left), 4, 1),
+            (adjustHead, 3, 1),
+            (Head("qty", "Qty", "Sort by quantity", HorizontalAlignment.Left), 4, 1),
+            (Head("price", "Price", "Sort by price: the one you typed, else the going rate; Offer last", HorizontalAlignment.Left), 5, 1),
         };
         foreach (var (c, col, span) in cells) { Grid.SetColumn(c, col); Grid.SetColumnSpan(c, span); grid.Children.Add(c); }
         foreach (var (b, _, _) in _sortButtons) b.Themed(TemplatedControl.ForegroundProperty, ThemeTokens.TextMuted);
@@ -571,6 +604,36 @@ internal sealed class SaleCardPanel : UserControl
         }
     }
 
+    /// <summary>
+    /// One price-percent slider per kind of item present. Rebuilt only when the kinds change, so the list refreshing
+    /// (as it does while a slider moves) never replaces the slider being dragged.
+    /// </summary>
+    void RebuildKindPrices(List<string> kinds)
+    {
+        string key = string.Join("|", kinds);
+        if (key == _kindPricesFor) return;
+        _kindPricesFor = key;
+        _kindPrices.Children.Clear();
+        foreach (var kind in kinds)
+        {
+            var (panel, slider, label) = PercentSlider(110,
+                $"Raises or lowers the card price of every {kind} item by a percent, on top of the card's slider. Your list keeps its prices.",
+                $"{kind} prices on the card as a percent. Click to put it back to 100%.");
+            slider.Value = _engine.KindPercent(kind);
+            label.Content = _engine.KindPercent(kind) + "%";
+            slider.ValueChanged += (_, _) =>
+            {
+                int pct = (int)Math.Round(slider.Value);
+                label.Content = pct + "%";
+                if (!_loading) _engine.SetKindPercent(kind, pct);
+            };
+            label.Click += (_, _) => slider.Value = 100;
+            var name = new TextBlock { Text = kind, Width = 118, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis }
+                .Themed(TextBlock.ForegroundProperty, ThemeTokens.Text);
+            _kindPrices.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 0, 18, 4), Children = { name, panel } });
+        }
+    }
+
     /// <summary>One checkbox per kind of item present (and inventory / storage): untick to take that whole group off the card.</summary>
     void RebuildFilters()
     {
@@ -598,6 +661,7 @@ internal sealed class SaleCardPanel : UserControl
             if (members.Count > 0) Group(place, members, v => _engine.SetGroup(place, v, members), true);
         }
         if (groups.Count == 0) _kinds.Children.Add(Muted("read a tab to see the kinds of item"));
+        RebuildKindPrices(groups);
 
         var options = new List<string> { ShowAll, ShowOn, ShowOff };
         options.AddRange(places);
@@ -666,11 +730,22 @@ internal sealed class SaleCardPanel : UserControl
                        Stack(4, Muted("Order"), Choice(SaleCardEngine.Orders, () => S.Order, v => S.Order = v,
                            "The order of the tiles. By type keeps each kind together (weapons, armor, accessories, potions, scrolls, gems and ores…), related items side by side.")));
 
+        var tagColours = Stack(4,
+            Muted("Tag colours"),
+            ColourRow("SALE", () => S.SaleTagColour, v => S.SaleTagColour = v),
+            ColourRow("BUYING", () => S.BuyTagColour, v => S.BuyTagColour = v),
+            ColourRow("IN SHOP", () => S.ShopTagColour, v => S.ShopTagColour = v),
+            ColourRow("Discount", () => S.DiscountTagColour, v => S.DiscountTagColour = v));
+        tagColours.Margin = new Thickness(25, 2, 0, 6);
         var hideOffer = Check("Hide \"Offer\"", () => S.HideOffer, v => S.HideOffer = v, "Items with no price show nothing instead of Offer, while the other prices still show.");
         var show = Stack(0,
             Check("Character picture", () => !S.NoAvatar, v => S.NoAvatar = !v, "Shows your character picture. Take character portrait lets you draw one by hand."),
             Check("Minimap", () => !S.NoMap, v => S.NoMap = !v, "The minimap picture, with the dot for where you stand. Read while the minimap is open at full or middle size."),
             Check("Total", () => !S.NoTotal, v => S.NoTotal = !v, "The total for everything on the card (price each × quantity). Items priced Offer are counted separately."),
+            Check("Total per kind", () => !S.NoKindTotals, v => S.NoKindTotals = !v,
+                "Splits the total by kind of item (Armor 200k, Weapons 50k, Gems & ores 45k), with the overall total under it. Shows when the card has more than one kind."),
+            Check("Group items by kind", () => !S.NoGroups, v => S.NoGroups = !v,
+                "Puts weapons, armor, gems & ores and so on in groups of their own, each under a thin divider in the card's accent colour with the kind's name."),
             Check("\"ea\" after prices of stacks", () => !S.NoEach, v => S.NoEach = !v,
                 "Adds \"ea\" after the price on cards that hold more than one (×2 chairs show 9999 ea), so buyers know it's the price of each. Throwing stars and bullets: the price of each set."),
             Check("OBO after prices", () => S.Obo, v => S.Obo = v, "Adds OBO (or best offer) after every price"),
@@ -683,6 +758,9 @@ internal sealed class SaleCardPanel : UserControl
                 "Puts a pink SALE tag on the items you sell (the Selling tab) and a blue BUYING tag on the ones you want (the Buying tab)."),
             Check("Mark items in my Free Market shop", () => !S.NoShopMarker, v => S.NoShopMarker = !v,
                 "Puts a green IN SHOP tag on items listed in your Free Market shop right now, and a line under the items: those can be bought in your shop; for everything else, DM you on Discord or whisper your IGN. Shows when the card has items from your shop."),
+            Check("Discount tag", () => !S.NoDiscountTags, v => S.NoDiscountTags = !v,
+                "Puts the discount (\"-20%\") on each priced item you sell while the price slider is below 100%. Hidden at 100% and above."),
+            tagColours,
             Muted("Discord name (optional, for the \"DM me on Discord\" line)"),
             Field(_discord, v => S.Discord = v, "Shown as \"DM <name> on Discord\". Leave empty to just say \"DM me on Discord\"."));
 
@@ -856,6 +934,7 @@ internal sealed class SaleCardPanel : UserControl
 
     void LoadFromSession()
     {
+        _kindPricesFor = "\0";   // settings (re)loaded: the kind sliders are built again with their saved values
         _loading = true;
         try
         {

@@ -88,7 +88,11 @@ internal sealed class WindowsFinder : IGameWindowFinder, IWindowList, ICursor
 
     public (int X, int Y)? PositionIn(GameWindow window)
     {
-        if (!Win32.GetCursorPos(out var p) || !Win32.ScreenToClient(window.Handle, ref p)) return null;
+        if (!Win32.GetCursorPos(out var p)) return null;
+        // Only while the pointer is over the game itself: over another window (MapleLite, a browser) that happens to sit
+        // where a game window is drawn, it isn't on the game, and readers waiting for it to move off would wait forever.
+        if (Win32.GetAncestor(Win32.WindowFromPoint(p), Win32.GA_ROOT) != Win32.GetAncestor(window.Handle, Win32.GA_ROOT)) return null;
+        if (!Win32.ScreenToClient(window.Handle, ref p)) return null;
         return (p.X, p.Y);
     }
 }

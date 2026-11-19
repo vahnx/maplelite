@@ -5,18 +5,19 @@ using MapleLite.Core.Ocr;
 namespace MapleLite.Plugins.SpawnTimer;
 
 /// <summary>
-/// Finds your character on screen by its name tag. Your name comes from the status bar (<see cref="IgnReader"/>);
+/// Finds your character on screen by its name tag. Your name comes from MapleLite's shared game state (read from the status bar);
 /// the tag is then looked for in a read of the whole picture. Tags are often read glued to a neighbour's
 /// ("SnailMaplePlayer"), so the name is searched for inside each line, allowing a slip or two.
 /// </summary>
-public sealed class PlayerFinder(IOcr ocr)
+public sealed class PlayerFinder(IOcr ocr, Func<string?>? sharedName = null)
 {
     public string? Name { get; private set; }
 
     /// <summary>Your name tag's centre in the picture, or null if it can't be seen.</summary>
     public async Task<(double X, double Y)?> FindAsync(Frame f, CancellationToken ct = default)
     {
-        Name ??= await IgnReader.ReadAsync(ocr, f);
+        // MapleLite reads your name once for every plugin (context.Game.Ign); read it here only without that
+        Name ??= sharedName?.Invoke() ?? await IgnReader.ReadAsync(ocr, f);
         if (Name == null) return null;
         // The camera keeps you near the middle, and tags are small: read the middle band at 2×. On a recorded session
         // this found the tag in 68% of pictures at ~150 ms, against 30% at ~800 ms for the whole picture at normal size.

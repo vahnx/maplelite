@@ -16,8 +16,8 @@ internal sealed class Shell : IAsyncDisposable
     public IPlatform Platform { get; }
     public OcrService Ocr { get; }
     public CaptureLoop Capture { get; }
-    /// <summary>The map you are on, read once for every plugin (<c>context.Map</c>).</summary>
-    public MapWatcher Map { get; }
+    /// <summary>Where you are, channel, name, HP/MP/EXP: read once for every plugin (<c>context.Game</c>, <c>context.Map</c>).</summary>
+    public GameWatcher Game { get; }
     public EventBus Events { get; } = new();
     public ThemeService Themes { get; }
     /// <summary>The shared item catalog (GameData/Items), loaded on first use and kept for the app's lifetime.</summary>
@@ -42,8 +42,8 @@ internal sealed class Shell : IAsyncDisposable
         Platform = Options.ReplayPath != null ? new ReplayPlatform(Options.ReplayPath, real, Options.ReplayLoop) : real;
         Ocr = new OcrService(Platform.Ocr);
         Capture = new CaptureLoop(Platform) { Target = new GameTarget(Settings.ProcessName, Settings.ProcessId), TargetFps = Settings.CaptureFps };
-        Map = new MapWatcher(Capture, Ocr);
-        Map.Start();
+        Game = new GameWatcher(Capture, Ocr);
+        Game.Start();
         Events.OnHandlerError = e => Log("event handler failed: " + e);
         Plugins = new PluginManager(this);
         Recorder = new SessionRecorder(this);
@@ -84,7 +84,7 @@ internal sealed class Shell : IAsyncDisposable
         Overlay?.Dispose();
         Hotkeys.Dispose();
         await report(92, "Stopping capture…");
-        await Map.DisposeAsync();
+        await Game.DisposeAsync();
         await Capture.DisposeAsync();
         Ocr.Dispose();
         Platform.Dispose();

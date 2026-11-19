@@ -221,11 +221,25 @@ public sealed class Vision
                 bool red = false;
                 if (x < f.W) { int p = f.At(x, y); red = R(p) > 185 && G(p) < 70 && B(p) < 80; }
                 if (red) { run++; continue; }
-                if (run >= 204 && run <= 206 && GridOk(f, x - run + StorageDx, y + StorageDy)) return new InvLayout(x - run + StorageDx, y + StorageDy, -1);
+                if (run >= 204 && run <= 206 && GridOk(f, x - run + StorageDx, y + StorageDy)) return Snap(f, x - run + StorageDx, y + StorageDy);
                 run = 0;
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// The storage grid measured from its red bar can sit a pixel or two off the real slots. The icons still match
+    /// there, but the counts are drawn in fixed rows of each slot and are missed. Moves the grid to where the most slot
+    /// edges line up, within two pixels; with none lining up anywhere, it stays where the bar put it.
+    /// </summary>
+    static InvLayout Snap(Frame f, int gx, int gy)
+    {
+        int bestX = gx, bestY = gy, best = Aligned(f, gx, gy);
+        for (int dy = -2; dy <= 2; dy++)
+            for (int dx = -2; dx <= 2; dx++)
+                if (Aligned(f, gx + dx, gy + dy) is var a && a > best) { best = a; bestX = gx + dx; bestY = gy + dy; }
+        return new InvLayout(bestX, bestY, -1);
     }
 
     /// <summary>True when the scrollbar right of the grid has a (blue) thumb, i.e. there are more rows than the ones showing.</summary>

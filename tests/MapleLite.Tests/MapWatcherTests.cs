@@ -15,7 +15,7 @@ public class MapWatcherTests
     [InlineData(" - ", null)]
     public void Room_numbers_are_dropped(string read, string? expected) => Assert.Equal(expected, MapWatcher.Clean(read));
 
-    static MapWatcher New() => new(null!, null!);
+    static MapWatcher New() => new();
 
     [Fact]
     public void A_name_is_taken_once_it_reads_the_same_twice()

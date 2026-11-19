@@ -23,7 +23,7 @@ public sealed record PluginManifest(string Id, string Name, string Version, stri
 /// makes a fresh instance. Keep the constructor cheap: the host also creates one just to read the manifest.
 /// Frame and event subscriptions made through the context are cleaned up by the host on stop.
 ///
-/// What plugins get: game frames, the shared OCR, the item catalog, storage, themes, notifications, hotkeys.
+/// What plugins get: game frames, the shared game state (map, channel, name, HP/MP/EXP), the shared OCR, the item catalog, storage, themes, notifications, hotkeys.
 /// What plugins never get: input to the game, game memory, packets, or their own screen capture.
 /// MapleLite is passive; plugins that automate play are not accepted.
 /// </summary>
@@ -45,6 +45,11 @@ public interface IPluginContext
     IFrameSource Frames { get; }
     /// <summary>The map you are on, read from the minimap once for all plugins (don't read the minimap yourself).</summary>
     MapleLite.Core.Game.IMapSource Map { get; }
+    /// <summary>
+    /// What MapleLite reads from the game for every plugin: map and location (with room), minimap size, channel, your
+    /// name, HP, MP and EXP. Take these from here instead of reading the minimap, status bar or channel window yourself.
+    /// </summary>
+    MapleLite.Core.Game.IGameState Game { get; }
     IPluginStorage Storage { get; }
     IThemeService Themes { get; }
     /// <summary>Events shared between plugins (chat lines, chat box position, …).</summary>

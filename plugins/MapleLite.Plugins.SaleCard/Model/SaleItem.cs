@@ -117,6 +117,21 @@ public sealed class SaleItem : INotifyPropertyChanged
     public string FinalPrice =>
         !string.IsNullOrWhiteSpace(Custom) ? Custom.Trim() : RateValue is long v ? Mesos.Format(v) : "Offer";
 
+    int _pricePercent = 100;
+    /// <summary>This item's own price adjustment on the card (1–200%), on top of its kind's and the card's.</summary>
+    public int PricePercent { get => _pricePercent; set => Set(ref _pricePercent, Math.Clamp(value, 1, 200), nameof(PricePercent), nameof(PricePercentText)); }
+    public string PricePercentText => _pricePercent + "%";
+    /// <summary>On a card tile only: its kind's and its own adjustment together (0.9 × 1.1), applied with the card's slider.</summary>
+    public double CardScale = 1;
+
+    /// <summary>A detached copy for the card (a merged tile): changing it never reaches the list or the save.</summary>
+    public SaleItem CardCopy()
+    {
+        var copy = (SaleItem)MemberwiseClone();
+        copy.PropertyChanged = null;
+        return copy;
+    }
+
     /// <summary>The not-for-sale identity: "id:N" for a known item, "pic:HASH" for an unrecognised slot picture.</summary>
     public string Ident => ItemId != 0 ? "id:" + ItemId : Key.Contains(":?") ? "pic:" + Key[(Key.IndexOf(":?") + 2)..] : "";
 }

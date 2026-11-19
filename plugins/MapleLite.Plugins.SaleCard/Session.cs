@@ -10,6 +10,8 @@ public sealed class SavedItem
     public string AutoStats { get; set; } = ""; public string AutoSlots { get; set; } = ""; public int Stacks { get; set; } = 1;
     /// <summary>You want to buy this rather than sell it (a BUYING tag on the card).</summary>
     public bool Buying { get; set; }
+    /// <summary>This item's own price adjustment on the card, in percent (100 = as listed).</summary>
+    public int PricePercent { get; set; } = 100;
     public string? Icon { get; set; }   // picture of an unrecognised item (32x32 BGRA, base64)
 }
 
@@ -67,6 +69,19 @@ public sealed class Session
     public int PricePercent { get; set; } = 100;
     /// <summary>Tag each tile SALE (pink) or BUYING (blue). On unless unticked.</summary>
     public bool NoTradeTags { get; set; }
+    /// <summary>Price adjustment per kind of item ("Armor" → 90), in percent; kinds not listed are at 100.</summary>
+    public Dictionary<string, int> KindPercent { get; set; } = new();
+    /// <summary>Group the tiles by kind (Weapons, Armor, Gems &amp; ores…), each group under a divider. On unless unticked.</summary>
+    public bool NoGroups { get; set; }
+    /// <summary>The total split by kind ("Armor 200k · Weapons 50k"), above the overall total. On unless unticked.</summary>
+    public bool NoKindTotals { get; set; }
+    /// <summary>Tag each item you sell with its discount ("-20%") while the price slider is below 100%. On unless unticked.</summary>
+    public bool NoDiscountTags { get; set; }
+    /// <summary>Tag colours ("#RRGGBB"): SALE, BUYING, IN SHOP and the discount tag. The tags' text stays white.</summary>
+    public string SaleTagColour { get; set; } = CardRenderer.TagColours.SaleDefault;
+    public string BuyTagColour { get; set; } = CardRenderer.TagColours.BuyDefault;
+    public string ShopTagColour { get; set; } = CardRenderer.TagColours.ShopDefault;
+    public string DiscountTagColour { get; set; } = CardRenderer.TagColours.DiscountDefault;
     /// <summary>Pack tiles into the shortest column at their own height (no gaps, nothing stretched). On unless unticked.</summary>
     public bool NoPack { get; set; }
     /// <summary>"ea" after the price of cards holding more than one (×2 chairs at "9,999 ea"). On unless unticked.</summary>
