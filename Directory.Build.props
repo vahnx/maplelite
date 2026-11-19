@@ -20,6 +20,8 @@
   -->
   <PropertyGroup>
     <UseArtifactsOutput>true</UseArtifactsOutput>
+    <!-- Multiple project-reference builds can otherwise race over shared artifacts in LocalAppData. -->
+    <BuildInParallel>false</BuildInParallel>
     <ArtifactsPath Condition="'$(ArtifactsPath)' == '' and '$(LOCALAPPDATA)' != ''">$(LOCALAPPDATA)/MapleLite-build</ArtifactsPath>
     <ArtifactsPath Condition="'$(ArtifactsPath)' == ''">$(MSBuildThisFileDirectory)artifacts</ArtifactsPath>
   </PropertyGroup>
