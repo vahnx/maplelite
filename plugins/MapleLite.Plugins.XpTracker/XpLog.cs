@@ -4,12 +4,15 @@ using MapleLite.Sdk;
 
 namespace MapleLite.Plugins.XpTracker;
 
-/// <summary>One rise in EXP: when, how much, and the map you were on ("" when the map wasn't readable).</summary>
-public readonly record struct XpGain(DateTimeOffset Time, long Amount, string Map);
+/// <summary>
+/// One rise in EXP: when, how much, the map you were on ("" when the map wasn't readable), and whether it was a reward
+/// (a party quest stage clear or completion, or a quest: printed in chat) rather than a kill.
+/// </summary>
+public readonly record struct XpGain(DateTimeOffset Time, long Amount, string Map, bool Reward = false);
 
 /// <summary>
 /// Every EXP gain, kept for browsing by map and time. Stored as one small tab-separated file per day
-/// (<c>gains/2026-11-18.tsv</c>: time, amount, map), appended in batches so a crash loses at most a few seconds.
+/// (<c>gains/2026-11-18.tsv</c>: time, amount, map, and "r" for a reward), appended in batches so a crash loses at most a few seconds.
 /// Older monthly files are split into days the first time the log opens.
 /// </summary>
 public sealed class XpLog
@@ -43,9 +46,13 @@ public sealed class XpLog
         {
             var sb = new StringBuilder();
             foreach (var g in day)
+            {
                 sb.Append(g.Time.ToString("o", CultureInfo.InvariantCulture)).Append('\t')
                   .Append(g.Amount.ToString(CultureInfo.InvariantCulture)).Append('\t')
-                  .Append(g.Map.Replace('\t', ' ').Replace('\n', ' ')).Append('\n');
+                  .Append(g.Map.Replace('\t', ' ').Replace('\n', ' '));
+                if (g.Reward) sb.Append("\tr");
+                sb.Append('\n');
+            }
             File.AppendAllText(day.Key, sb.ToString());
         }
     }
@@ -75,7 +82,7 @@ public sealed class XpLog
         if (parts.Length < 2) return null;
         if (!DateTimeOffset.TryParse(parts[0], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var t)) return null;
         if (!long.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var amount)) return null;
-        return new XpGain(t, amount, parts.Length > 2 ? parts[2] : "");
+        return new XpGain(t, amount, parts.Length > 2 ? parts[2].TrimEnd('\r') : "", parts.Length > 3 && parts[3].Trim() == "r");
     }
 }
 
@@ -138,12 +145,24 @@ public sealed class MapNames
 public enum XpGrouping { Map, Day, Hour, MapAndDay }
 
 /// <summary>One row of the browse table.</summary>
-public sealed record XpSummary(string Label, string Map, DateTimeOffset First, DateTimeOffset Last, long Exp, int Kills, TimeSpan Hunting)
+/// <param name="Exp">All EXP: kills and rewards.</param>
+/// <param name="Kills">Rises from kills (rewards aren't counted).</param>
+/// <param name="RewardExp">EXP from rewards: party quest stage clears and completions, quests.</param>
+public sealed record XpSummary(string Label, string Map, DateTimeOffset First, DateTimeOffset Last, long Exp, int Kills, TimeSpan Hunting,
+    int Rewards = 0, long RewardExp = 0)
 {
     public double? PerHour => Hunting.TotalMinutes >= 1 ? Exp / Hunting.TotalHours : null;
     public double? KillsPerHour => Hunting.TotalMinutes >= 1 ? Kills / Hunting.TotalHours : null;
-    public double AveragePerKill => Kills > 0 ? (double)Exp / Kills : 0;
+    public double AveragePerKill => Kills > 0 ? (double)(Exp - RewardExp) / Kills : 0;
+
+    internal static XpSummary Of(string label, string map, IReadOnlyList<XpGain> list) =>
+        new(label, map, list.Count > 0 ? list.Min(g => g.Time) : default, list.Count > 0 ? list.Max(g => g.Time) : default,
+            list.Sum(g => g.Amount), list.Count(g => !g.Reward), XpBrowse.Hunting(list),
+            list.Count(g => g.Reward), list.Where(g => g.Reward).Sum(g => g.Amount));
 }
+
+/// <summary>Which gains to show: everything, kills only, or rewards only.</summary>
+public enum XpKind { All, Kills, Rewards }
 
 /// <summary>Filters and groups logged gains for browsing.</summary>
 public static class XpBrowse
@@ -189,14 +208,19 @@ public static class XpBrowse
         {
             var list = gr.OrderBy(g => g.Time).ToList();
             var maps = list.Select(Map).Distinct().ToList();
-            return (gr.Key.Key, Row: new XpSummary(gr.Key.Label, maps.Count == 1 ? maps[0] : $"{maps.Count} maps", list[0].Time, list[^1].Time,
-                list.Sum(g => g.Amount), list.Count, Hunting(list)));
+            return (gr.Key.Key, Row: XpSummary.Of(gr.Key.Label, maps.Count == 1 ? maps[0] : $"{maps.Count} maps", list));
         });
         // maps by most EXP; times newest first
         return (by == XpGrouping.Map ? rows.OrderByDescending(r => r.Row.Exp) : rows.OrderByDescending(r => r.Key)).Select(r => r.Row).ToList();
     }
 
-    public static XpSummary Total(IReadOnlyCollection<XpGain> gains) =>
-        new("Total", "", gains.Count > 0 ? gains.Min(g => g.Time) : default, gains.Count > 0 ? gains.Max(g => g.Time) : default,
-            gains.Sum(g => g.Amount), gains.Count, Hunting(gains));
+    public static XpSummary Total(IReadOnlyCollection<XpGain> gains) => XpSummary.Of("Total", "", [.. gains]);
+
+    /// <summary>Only the kills, only the rewards, or everything.</summary>
+    public static List<XpGain> OfKind(IEnumerable<XpGain> gains, XpKind kind) => kind switch
+    {
+        XpKind.Kills => gains.Where(g => !g.Reward).ToList(),
+        XpKind.Rewards => gains.Where(g => g.Reward).ToList(),
+        _ => gains.ToList(),
+    };
 }

@@ -66,6 +66,9 @@ public sealed class XpTrackerPlugin : IPlugin
     public Task StopAsync()
     {
         _sub?.Dispose(); _sub = null;
+        List<(XpGain Gain, int Session)> left;
+        lock (_lock) { left = [.. _held]; _held.Clear(); }
+        foreach (var (g, s) in left) FileGain(g, s); // not confirmed in chat in time: kills
         EndSession();
         Flush();
         return Task.CompletedTask;
@@ -94,9 +97,14 @@ public sealed class XpTrackerPlugin : IPlugin
         }
         if (gain > 0)
         {
-            _log?.Add(new XpGain(gf.Time, gain, map));
+            var g = new XpGain(gf.Time, gain, map);
+            bool hold;
+            lock (_lock) hold = _spotter.Worth(gain);
+            if (hold) lock (_lock) _held.Add((g, _sessionNo));
+            else FileGain(g, _sessionNo);
             _ctx?.Events.Publish(new ExpGainedEvent(gf.Time, gain, r.Exp, r.ExpPercent, Manifest.Id));
         }
+        CheckHeld(gf);
         if (gf.Time - _lastFlush > TimeSpan.FromSeconds(10))
         {
             _lastFlush = gf.Time;
@@ -111,6 +119,64 @@ public sealed class XpTrackerPlugin : IPlugin
     }
 
     DateTimeOffset _lastSaved = DateTimeOffset.MinValue;
+
+    // ---- telling rewards (PQ stage clears and completions, quests) from kills ----
+
+    readonly RewardSpotter _spotter = new();
+    readonly List<(XpGain Gain, int Session)> _held = new();
+    int _sessionNo, _sessionRewards;
+    long _sessionRewardExp;
+    bool _chatReading;
+    DateTimeOffset _lastChatRead = DateTimeOffset.MinValue;
+
+    /// <summary>Keeps a gain in the log as a kill or a reward, and in the session's reward count.</summary>
+    void FileGain(XpGain g, int session)
+    {
+        lock (_lock)
+        {
+            if (!g.Reward) _spotter.Killed(g.Amount);
+            else if (session == _sessionNo) { _sessionRewards++; _sessionRewardExp += g.Amount; }
+        }
+        _log?.Add(g);
+    }
+
+    /// <summary>
+    /// For gains held as possible rewards: reads the chat box (a few times a second) for their amounts. Found means a
+    /// reward; still not found after <see cref="RewardSpotter.LookFor"/> means a kill.
+    /// </summary>
+    void CheckHeld(MapleLite.Core.Capture.GameFrame gf)
+    {
+        List<(XpGain Gain, int Session)> due;
+        lock (_lock)
+        {
+            if (_held.Count == 0) return;
+            due = _held.Where(h => gf.Time - h.Gain.Time > RewardSpotter.LookFor).ToList();
+            foreach (var d in due) _held.Remove(d);
+        }
+        foreach (var (g, s) in due) FileGain(g, s);
+        if (_ctx is not { Ocr.Available: true } ctx || _chatReading || gf.Time - _lastChatRead < TimeSpan.FromMilliseconds(300)) return;
+        lock (_lock) if (_held.Count == 0) return;
+        _chatReading = true;
+        _lastChatRead = gf.Time;
+        var known = ctx.Events.Last<ChatAreaEvent>() is { } a && a.FrameWidth == gf.Frame.W && a.FrameHeight == gf.Frame.H ? a.Area : (MapleLite.Core.Imaging.Region?)null;
+        var chat = gf.Frame.Crop(RewardSpotter.ChatArea(gf.Frame, known)); // a copy: the frame isn't ours to keep
+        Task.Run(async () =>
+        {
+            try
+            {
+                var text = (await ctx.Ocr.ReadAsync(chat, new MapleLite.Core.Ocr.OcrRequest(new MapleLite.Core.Imaging.Region(0, 0, chat.W, chat.H)))).Text;
+                List<(XpGain Gain, int Session)> found;
+                lock (_lock)
+                {
+                    found = _held.Where(h => RewardSpotter.InChat(text, h.Gain.Amount)).ToList();
+                    foreach (var f in found) _held.Remove(f);
+                }
+                foreach (var (g, s) in found) FileGain(g with { Reward = true }, s);
+            }
+            catch (Exception e) { ctx.Log("couldn't read the chat for a reward: " + e.Message); }
+            finally { _chatReading = false; }
+        });
+    }
 
     XpSessionRecord? Current()
     {
@@ -140,6 +206,9 @@ public sealed class XpTrackerPlugin : IPlugin
         {
             _session = new XpSession();
             _startPercent = null;
+            _sessionNo++;
+            _sessionRewards = 0;
+            _sessionRewardExp = 0;
         }
         if (rec == null || _ctx == null) return;
         _history.Insert(0, rec);
@@ -168,6 +237,7 @@ public sealed class XpTrackerPlugin : IPlugin
         }
         var gained = Fact("Gained this session");
         var kills = Fact("Kills (EXP rises)");
+        var rewards = Fact("PQ / quest rewards");
         var level = Fact("Level progress");
         var toLevel = Fact("To next level");
         var time = Fact("Session time");
@@ -177,14 +247,17 @@ public sealed class XpTrackerPlugin : IPlugin
         void Refresh()
         {
             XpSession s; StatusBarReading? last; DateTimeOffset? seen;
-            lock (_lock) { s = _session; last = _last; seen = _lastSeen; }
+            int nRewards; long rewardExp;
+            lock (_lock) { s = _session; last = _last; seen = _lastSeen; nRewards = _sessionRewards; rewardExp = _sessionRewardExp; }
             bool live = seen is { } t && DateTimeOffset.Now - t < TimeSpan.FromSeconds(3);
             status.Text = seen == null ? "Looking for the status bar at the bottom of the game…"
                 : live ? "Reading EXP from the status bar."
                 : $"The status bar hasn't been readable for {(DateTimeOffset.Now - seen.Value).TotalSeconds:0} s (covered, or the game isn't showing it).";
             rate.Text = s.PerHour is { } ph ? $"{ph:N0} EXP/h" : "– EXP/h";
             gained.Text = s.Started == null ? "–" : $"{s.Gained:N0} EXP{(s.Levels > 0 ? $" · {s.Levels} level{(s.Levels == 1 ? "" : "s")}" : "")}";
-            kills.Text = s.Gains == 0 ? "–" : $"{s.Gains:N0}{(s.GainsPerHour is { } kh ? $" · {kh:N0}/h" : "")} · last +{s.LastGain:N0}, average +{(double)s.Gained / s.Gains:0.#}";
+            int nKills = Math.Max(0, s.Gains - nRewards);
+            kills.Text = nKills == 0 ? "–" : $"{nKills:N0}{(s.Elapsed.TotalMinutes >= 1 ? $" · {nKills / s.Elapsed.TotalHours:N0}/h" : "")} · last +{s.LastGain:N0}, average +{(double)(s.Gained - rewardExp) / nKills:0.#}";
+            rewards.Text = nRewards == 0 ? "–" : $"{rewardExp:N0} EXP from {nRewards:N0} (stage clears, completions, quests)";
             level.Text = s.Exp is { } e && s.Percent is { } p ? $"{e:N0} EXP · {p:0.00}%" : "–";
             toLevel.Text = s.ToLevel is { } left ? $"{left:N0} EXP{(s.TimeToLevel is { } ttl ? $" · about {Duration(ttl)} at this rate" : "")}" : "–";
             time.Text = s.Started == null ? "–" : Duration(s.Elapsed);
@@ -219,6 +292,8 @@ public sealed class XpTrackerPlugin : IPlugin
     static readonly string[] Ranges = ["Today", "Yesterday", "Last 7 days", "Last 30 days", "All time", "Custom"];
     static readonly (string Name, XpGrouping By)[] Groupings =
         [("By map", XpGrouping.Map), ("By day", XpGrouping.Day), ("By hour", XpGrouping.Hour), ("By day and map", XpGrouping.MapAndDay)];
+    static readonly (string Name, XpKind Kind)[] Kinds =
+        [("Kills and rewards", XpKind.All), ("Kills only", XpKind.Kills), ("PQ / quest rewards only", XpKind.Rewards)];
 
     Control BrowseCard()
     {
@@ -227,7 +302,8 @@ public sealed class XpTrackerPlugin : IPlugin
         var from = new CalendarDatePicker { Width = 140, Watermark = "Any day" };
         var to = new CalendarDatePicker { Width = 140, Watermark = "Any day" };
         var group = new ComboBox { Width = 170, ItemsSource = Groupings.Select(g => g.Name).ToArray(), SelectedIndex = 0 };
-        var table = new Grid { ColumnDefinitions = new ColumnDefinitions("*,90,110,100,70,70,80"), RowSpacing = 4, ColumnSpacing = 10 };
+        var kind = new ComboBox { Width = 190, ItemsSource = Kinds.Select(k => k.Name).ToArray(), SelectedIndex = 0 };
+        var table = new Grid { ColumnDefinitions = new ColumnDefinitions("*,90,110,100,70,70,80,110"), RowSpacing = 4, ColumnSpacing = 10 };
         var note = Muted("");
         List<XpSummary> shown = new();
         bool filling = false;
@@ -260,13 +336,14 @@ public sealed class XpTrackerPlugin : IPlugin
             string? pick = map.SelectedItem as string is { } m && m != AllMaps ? m : null;
             DateTime? f = from.SelectedDate, t = to.SelectedDate;
             var by = Groupings[Math.Max(0, group.SelectedIndex)].By;
+            var only = Kinds[Math.Max(0, kind.SelectedIndex)].Kind;
             // reading every gain can take a moment once there are months of them: off the UI thread
             var (rows, total, maps, count) = await Task.Run(() =>
             {
                 var all = log.All();
                 var inRange = XpBrowse.Filter(all, null, f, t);
                 var maps = XpBrowse.Group(inRange, XpGrouping.Map).Select(r => r.Label).ToList();
-                var picked = pick == null ? inRange : XpBrowse.Filter(inRange, pick, null, null);
+                var picked = XpBrowse.OfKind(pick == null ? inRange : XpBrowse.Filter(inRange, pick, null, null), only);
                 return (XpBrowse.Group(picked, by), XpBrowse.Total(picked), maps, all.Count);
             });
             filling = true;
@@ -284,6 +361,7 @@ public sealed class XpTrackerPlugin : IPlugin
 
         map.SelectionChanged += (_, _) => { if (!filling) Show(); };
         group.SelectionChanged += (_, _) => { if (!filling) Show(); };
+        kind.SelectionChanged += (_, _) => { if (!filling) Show(); };
         range.SelectionChanged += (_, _) => { if (filling) return; SetRange(); Show(); };
         void DatePicked()
         {
@@ -299,7 +377,7 @@ public sealed class XpTrackerPlugin : IPlugin
 
         var card = Card(Stack(10, Title("Browse EXP"),
             Muted("Every EXP gain, by the map you were on and when. Pick a map and a time span, and how to group them."),
-            Wrap(Stack(4, Muted("Map"), map), Stack(4, Muted("When"), range), Stack(4, Muted("From"), from), Stack(4, Muted("To"), to), Stack(4, Muted("Group"), group)),
+            Wrap(Stack(4, Muted("Map"), map), Stack(4, Muted("When"), range), Stack(4, Muted("From"), from), Stack(4, Muted("To"), to), Stack(4, Muted("Group"), group), Stack(4, Muted("EXP from"), kind)),
             table, note,
             Wrap(Button("Refresh", Show), Button("Export these rows…", () => ExportRows(table, shown)))));
         card.AttachedToVisualTree += (_, _) => Show();
@@ -324,13 +402,14 @@ public sealed class XpTrackerPlugin : IPlugin
             }
         }
         string Rate(double? v) => v is { } x ? x.ToString("N0") : "–";
-        Row(true, false, "", "Hunting", "EXP", "EXP/h", "Kills", "Kills/h", "EXP/kill");
-        if (rows.Count == 0) { Row(false, false, "Nothing in this view.", "", "", "", "", "", ""); return; }
+        string Rewards(XpSummary x) => x.Rewards == 0 ? "–" : $"{x.RewardExp:N0} ({x.Rewards})";
+        Row(true, false, "", "Hunting", "EXP", "EXP/h", "Kills", "Kills/h", "EXP/kill", "Rewards");
+        if (rows.Count == 0) { Row(false, false, "Nothing in this view.", "", "", "", "", "", "", ""); return; }
         foreach (var x in rows.Take(200))
-            Row(false, false, x.Label, Duration(x.Hunting), x.Exp.ToString("N0"), Rate(x.PerHour), x.Kills.ToString("N0"), Rate(x.KillsPerHour), x.AveragePerKill.ToString("N1"));
+            Row(false, false, x.Label, Duration(x.Hunting), x.Exp.ToString("N0"), Rate(x.PerHour), x.Kills.ToString("N0"), Rate(x.KillsPerHour), x.AveragePerKill.ToString("N1"), Rewards(x));
         if (rows.Count > 1)
             Row(false, true, rows.Count > 200 ? $"Total ({rows.Count} rows, first 200 shown)" : "Total", Duration(total.Hunting), total.Exp.ToString("N0"),
-                Rate(total.PerHour), total.Kills.ToString("N0"), Rate(total.KillsPerHour), total.AveragePerKill.ToString("N1"));
+                Rate(total.PerHour), total.Kills.ToString("N0"), Rate(total.KillsPerHour), total.AveragePerKill.ToString("N1"), Rewards(total));
     }
 
     async void ExportRows(Control anchor, List<XpSummary> rows)
@@ -342,10 +421,10 @@ public sealed class XpTrackerPlugin : IPlugin
         });
         if (file?.TryGetLocalPath() is not { } path) return;
         static string Q(string s) => s.Contains(',') || s.Contains('"') ? "\"" + s.Replace("\"", "\"\"") + "\"" : s;
-        var sb = new StringBuilder("group,map,first,last,hunting_minutes,exp,exp_per_hour,kills,kills_per_hour,exp_per_kill\n");
+        var sb = new StringBuilder("group,map,first,last,hunting_minutes,exp,exp_per_hour,kills,kills_per_hour,exp_per_kill,rewards,reward_exp\n");
         foreach (var x in rows)
             sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
-                $"{Q(x.Label)},{Q(x.Map)},{x.First.LocalDateTime:yyyy-MM-dd HH:mm:ss},{x.Last.LocalDateTime:yyyy-MM-dd HH:mm:ss},{x.Hunting.TotalMinutes:0.0},{x.Exp},{x.PerHour ?? 0:0},{x.Kills},{x.KillsPerHour ?? 0:0},{x.AveragePerKill:0.0}"));
+                $"{Q(x.Label)},{Q(x.Map)},{x.First.LocalDateTime:yyyy-MM-dd HH:mm:ss},{x.Last.LocalDateTime:yyyy-MM-dd HH:mm:ss},{x.Hunting.TotalMinutes:0.0},{x.Exp},{x.PerHour ?? 0:0},{x.Kills},{x.KillsPerHour ?? 0:0},{x.AveragePerKill:0.0},{x.Rewards},{x.RewardExp}"));
         try { await File.WriteAllTextAsync(path, sb.ToString()); _ctx?.Notify("Exported " + Path.GetFileName(path)); }
         catch (IOException e) { _ctx?.Notify("Couldn't export: " + e.Message); }
     }

@@ -73,6 +73,16 @@ public sealed class XpRate
         while (_samples.Count > 2 && t - _samples[0].t > _window) _samples.RemoveAt(0);
     }
 
+    /// <summary>Takes a new EXP value as the starting point without counting the change as gained.</summary>
+    public void Rebase(DateTimeOffset t, ExpReading r)
+    {
+        Started ??= t;
+        if (_last >= 0) _gainedBeforeDrop += _last - _sessionStart;
+        _last = _sessionStart = r.Exp;
+        LastPercent = r.Percent ?? LastPercent;
+        _samples.Add((t, Gained, r.Percent));
+    }
+
     /// <summary>EXP per hour over the window, or null before there are two samples a few seconds apart.</summary>
     public double? PerHour
     {

@@ -42,6 +42,14 @@ public sealed class XpSession
         }
     }
 
+    /// <summary>How far a rise's EXP-per-percent may stray from the level's before the reading is called a misread.</summary>
+    const double NeededTolerance = 0.03;
+    /// <summary>Readings in a row that must agree on an out-of-line value before the session takes it as the truth.</summary>
+    const int ResyncReadings = 15;
+
+    long? _suspect;
+    int _suspectCount;
+
     /// <summary>Adds a reading. Returns the rise in EXP it showed (0 when unchanged or not yet believed).</summary>
     public long Add(DateTimeOffset t, long exp, double percent)
     {
@@ -53,15 +61,36 @@ public sealed class XpSession
         }
         else if (Exp is { } prev && exp > prev)
         {
+            // A rise never changes the level, so the EXP the level needs (EXP ÷ percent) must stay the same.
+            // A garbled read (the bar half covered by another window) breaks that: hold it, and only take it
+            // as the truth, without counting it as EXP gained, if it stays put for a few seconds.
+            if (Needed is { } need && NeededFor(exp, percent) is { } n && Math.Abs(n - need) > need * NeededTolerance)
+            {
+                _suspectCount = _suspect == exp ? _suspectCount + 1 : 1;
+                _suspect = exp;
+                if (_suspectCount >= ResyncReadings) Resync(t, exp, percent);
+                return 0;
+            }
             gain = exp - prev;
             Gains++;
             LastGain = gain;
         }
         _pendingDrop = null;
+        _suspect = null;
         Exp = exp;
         Percent = percent;
         _rate.Add(t, new ExpReading(exp, percent, null));
         return gain;
+    }
+
+    static long? NeededFor(long exp, double percent) => percent is >= 1 and < 100 ? (long)Math.Round(exp * 100 / percent) : null;
+
+    void Resync(DateTimeOffset t, long exp, double percent)
+    {
+        _pendingDrop = null; _suspect = null;
+        Exp = exp;
+        Percent = percent;
+        _rate.Rebase(t, new ExpReading(exp, percent, null));
     }
 }
 
