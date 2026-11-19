@@ -128,8 +128,12 @@ internal struct CMTime
 }
 
 /// <summary>
-/// A one-shot Objective-C block made by hand (the Blocks ABI), for completion handlers.
-/// It is marked global, so Block_copy and Block_release leave it alone; it frees itself after its one call.
+/// An Objective-C block made by hand (the Blocks ABI), for completion handlers.
+/// <see cref="Pass"/> builds it as a stack block, hands it to the API, and frees it when the call returns.
+/// An async API keeps it with Block_copy, which makes a heap copy that the block runtime reference-counts;
+/// the copy helper gives that copy its own handle to the callback and the dispose helper frees it once the
+/// API has released the block. The block never frees itself while running: the caller still releases it
+/// after the call returns, so freeing it inside Invoke made ScreenCaptureKit release freed memory and crash.
 /// The block's arguments arrive as raw pointers; arguments the API doesn't pass are ignored.
 /// </summary>
 internal static unsafe class Blocks
@@ -138,38 +142,59 @@ internal static unsafe class Blocks
     struct Literal { public nint Isa; public int Flags; public int Reserved; public nint Invoke; public nint Descriptor; public nint Context; }
 
     [StructLayout(LayoutKind.Sequential)]
-    struct Descriptor { public nuint Reserved; public nuint Size; public nint Signature; }
+    struct Descriptor { public nuint Reserved; public nuint Size; public nint Copy; public nint Dispose; public nint Signature; }
 
-    const int IsGlobal = 1 << 28, HasSignature = 1 << 30;
-    static readonly nint GlobalIsa = ObjC.Export(ObjC.LibSystem, "_NSConcreteGlobalBlock");
+    const int HasCopyDispose = 1 << 25, HasSignature = 1 << 30;
+    static readonly nint StackIsa = ObjC.Export(ObjC.LibSystem, "_NSConcreteStackBlock");
     static readonly ConcurrentDictionary<string, nint> Descriptors = new();
 
+    /// <summary>Makes the block, passes it to <paramref name="send"/> (which hands it to the API), then frees this copy.</summary>
     /// <param name="signature">Objective-C type encoding, e.g. "v16@?0@8" for (NSError*), "v24@?0@8@16" for (id, NSError*).</param>
-    public static nint Create(string signature, Action<nint, nint> callback)
+    public static void Pass(string signature, Action<nint, nint> callback, Action<nint> send)
     {
         var desc = Descriptors.GetOrAdd(signature, s =>
         {
             var d = (Descriptor*)NativeMemory.AllocZeroed((nuint)sizeof(Descriptor));
             d->Size = (nuint)sizeof(Literal);
+            d->Copy = (nint)(delegate* unmanaged<nint, nint, void>)&CopyHelper;
+            d->Dispose = (nint)(delegate* unmanaged<nint, void>)&DisposeHelper;
             d->Signature = Marshal.StringToCoTaskMemUTF8(s); // lives for the process
             return (nint)d;
         });
         var b = (Literal*)NativeMemory.AllocZeroed((nuint)sizeof(Literal));
-        b->Isa = GlobalIsa;
-        b->Flags = IsGlobal | HasSignature;
+        b->Isa = StackIsa;
+        b->Flags = HasCopyDispose | HasSignature;
         b->Invoke = (nint)(delegate* unmanaged<nint, nint, nint, void>)&Invoke;
         b->Descriptor = desc;
         b->Context = GCHandle.ToIntPtr(GCHandle.Alloc(callback));
-        return (nint)b;
+        try { send((nint)b); }
+        finally
+        {
+            GCHandle.FromIntPtr(b->Context).Free();
+            NativeMemory.Free(b);
+        }
     }
 
     [UnmanagedCallersOnly]
     static void Invoke(nint block, nint a, nint b)
     {
-        var lit = (Literal*)block;
-        var handle = GCHandle.FromIntPtr(lit->Context);
-        try { ((Action<nint, nint>)handle.Target!)(a, b); }
+        try { ((Action<nint, nint>)GCHandle.FromIntPtr(((Literal*)block)->Context).Target!)(a, b); }
         catch { /* an exception must never unwind into native code */ }
-        finally { handle.Free(); NativeMemory.Free(lit); }
+    }
+
+    /// <summary>Block_copy moved the literal to the heap: give the copy its own handle to the same callback.</summary>
+    [UnmanagedCallersOnly]
+    static void CopyHelper(nint dst, nint src)
+    {
+        var target = GCHandle.FromIntPtr(((Literal*)src)->Context).Target;
+        ((Literal*)dst)->Context = GCHandle.ToIntPtr(GCHandle.Alloc(target));
+    }
+
+    /// <summary>The last reference to a heap copy went away.</summary>
+    [UnmanagedCallersOnly]
+    static void DisposeHelper(nint block)
+    {
+        var lit = (Literal*)block;
+        if (lit->Context != 0) { GCHandle.FromIntPtr(lit->Context).Free(); lit->Context = 0; }
     }
 }

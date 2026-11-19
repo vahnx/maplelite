@@ -122,7 +122,10 @@ internal sealed class MacFinder : IGameWindowFinder, IWindowList, ICursor
         try
         {
             var p = CG.CGEventGetLocation(ev); // points, top-left origin, same space as window bounds
-            return ((int)Math.Round(p.X * window.Scale) - window.Client.X, (int)Math.Round(p.Y * window.Scale) - window.Client.Y);
+            // The captured picture is in game pixels (see GamePixels), so the cursor is too.
+            int s = GamePixels.Factor(window.Scale);
+            double x = (p.X * window.Scale - window.Client.X) / s, y = (p.Y * window.Scale - window.Client.Y) / s;
+            return ((int)Math.Floor(x), (int)Math.Floor(y));
         }
         finally { CG.CFRelease(ev); }
     }

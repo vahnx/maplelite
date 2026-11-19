@@ -17,7 +17,7 @@ internal sealed class MacCapture : IWindowCapture
     readonly Dictionary<uint, StreamSession> _sessions = new();
     readonly SemaphoreSlim _gate = new(1, 1);
     bool _askedPermission;
-    DateTime _streamRetryAfter;
+    DateTime _streamRetryAfter, _detectAfter;
     string? _streamError;
 
     // The last crop, so the same picture comes back as the same Frame (the shared OCR caches by Frame.Id).
@@ -45,13 +45,58 @@ internal sealed class MacCapture : IWindowCapture
         if (!info.Onscreen) throw new InvalidOperationException("The game is minimized or on another Space.");
         var now = MacFinder.Describe(info);
 
-        var whole = await GrabAsync(id, now.Bounds.Width, now.Bounds.Height, ct).ConfigureAwait(false);
-        if (ReferenceEquals(whole, _lastWhole) && _lastClient != null) return _lastClient;
+        int s = GamePixels.Factor(now.Scale);
+        bool fullscreen = now.Mode == WindowMode.Borderless;
+        int ww = now.Bounds.Width, wh = now.Bounds.Height;
 
-        int top = Titlebar.Resolve(id, whole, now.Scale, now.Mode == WindowMode.Borderless);
-        if (whole.W < 200 || whole.H - top < 200) throw new InvalidOperationException("The game window is too small to read.");
-        var client = top == 0 ? whole : whole.Crop(new Region(0, top, whole.W, whole.H - top));
-        _lastWhole = whole; _lastClient = client;
+        // Retina with a running stream: build the game-sized picture straight from the stream's buffer, which reads
+        // a quarter of the pixels and skips the full-size copy (on an M1 the full-size path cost a core at 30/s).
+        if (s > 1 && StreamsAvailable && DateTime.UtcNow >= _streamRetryAfter)
+        {
+            try
+            {
+                var session = await SessionAsync(id, ww, wh, ct).ConfigureAwait(false);
+                if (!Titlebar.TryKnown(id, ww, wh, out int top))
+                {
+                    // Detecting the title bar needs the full picture; try at most every couple of seconds until it's found.
+                    if (DateTime.UtcNow >= _detectAfter)
+                    {
+                        _detectAfter = DateTime.UtcNow.AddSeconds(2);
+                        var whole = await session.LatestAsync(ct).ConfigureAwait(false);
+                        top = Titlebar.Resolve(id, whole, now.Scale, fullscreen);
+                        if (Titlebar.TryKnown(id, whole.W, whole.H, out _)) Titlebar.Remember(id, whole, GamePixels.AlignTop(top, s));
+                    }
+                    else top = Titlebar.Height(id, ww, wh, now.Scale, fullscreen);
+                }
+                top = GamePixels.AlignTop(top, s);
+                if (ww < 200 || wh - top < 200) throw new WindowTooSmallException();
+                var game = await session.LatestGameAsync(top, s, ct).ConfigureAwait(false);
+                _streamError = null;
+                return game;
+            }
+            catch (Exception e) when (e is not WindowTooSmallException && (e is not OperationCanceledException || !ct.IsCancellationRequested))
+            {
+                _streamError = e.Message;
+                _streamRetryAfter = DateTime.UtcNow.AddSeconds(10);
+                await DropAsync(id).ConfigureAwait(false);
+            }
+        }
+
+        var full = await GrabAsync(id, ww, wh, ct).ConfigureAwait(false);
+        if (ReferenceEquals(full, _lastWhole) && _lastClient != null) return _lastClient;
+
+        int cut = Titlebar.Resolve(id, full, now.Scale, fullscreen);
+        // On Retina the game's pixels arrive as 2x2 blocks: cut on a block boundary, then shrink to game pixels.
+        if (s > 1)
+        {
+            int aligned = GamePixels.AlignTop(cut, s);
+            if (aligned != cut) Titlebar.Remember(id, full, aligned);
+            cut = aligned;
+        }
+        if (full.W < 200 || full.H - cut < 200) throw new WindowTooSmallException();
+        var client = cut == 0 ? full : full.Crop(new Region(0, cut, full.W, full.H - cut));
+        if (s > 1) client = GamePixels.Shrink(client, s);
+        _lastWhole = full; _lastClient = client;
         return client;
     }
 
@@ -136,6 +181,8 @@ internal sealed class MacCapture : IWindowCapture
         _sessions.Clear();
     }
 
+    sealed class WindowTooSmallException() : InvalidOperationException("The game window is too small to read.");
+
     /// <summary>A running SCStream for one window. Keeps only the newest pixel buffer; converts it when asked.</summary>
     sealed class StreamSession : IDisposable
     {
@@ -147,8 +194,9 @@ internal sealed class MacCapture : IWindowCapture
         nint _stream, _output, _queue;
         readonly object _lock = new();
         nint _latest;
-        long _seq, _convertedSeq = -1;
-        Frame? _converted;
+        long _seq, _convertedSeq = -1, _gameSeq = -1;
+        int _gameTop = -1;
+        Frame? _converted, _game;
         readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
         int _disposed;
 
@@ -192,13 +240,12 @@ internal sealed class MacCapture : IWindowCapture
         static async Task<nint> ShareableContentAsync(CancellationToken ct)
         {
             var tcs = new TaskCompletionSource<nint>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var block = Blocks.Create("v24@?0@8@16", (content, error) =>
+            Blocks.Pass("v24@?0@8@16", (content, error) =>
             {
                 if (content == 0) { tcs.TrySetException(new InvalidOperationException(Describe(error))); return; }
                 var kept = Retain(content);
                 if (!tcs.TrySetResult(kept)) Release(kept); // nobody is waiting any more
-            });
-            Send(Class("SCShareableContent"), "getShareableContentExcludingDesktopWindows:onScreenWindowsOnly:completionHandler:", Bool(true), Bool(false), block);
+            }, block => Send(Class("SCShareableContent"), "getShareableContentExcludingDesktopWindows:onScreenWindowsOnly:completionHandler:", Bool(true), Bool(false), block));
             try { return await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false); }
             catch (TimeoutException) { tcs.TrySetCanceled(); throw new InvalidOperationException("ScreenCaptureKit didn't answer."); }
         }
@@ -213,7 +260,9 @@ internal sealed class MacCapture : IWindowCapture
                 Send(config, "setHeight:", h);
                 Send(config, "setPixelFormat:", (nint)BGRA);
                 Send(config, "setShowsCursor:", Bool(false));
-                SendTime(config, "setMinimumFrameInterval:", CMTime.Make(1, 60));
+                // 30 a second is more than any reader asks for (Chat History, the busiest, takes 20), and each frame
+                // costs the window server a full-size copy: on an M1, 60 a second added 10–14% to WindowServer's CPU.
+                SendTime(config, "setMinimumFrameInterval:", CMTime.Make(1, 30));
                 Send(config, "setQueueDepth:", 5);
                 if (Responds(config, "setIgnoreShadowsSingleWindow:")) Send(config, "setIgnoreShadowsSingleWindow:", Bool(true));
                 if (Responds(config, "setColorSpaceName:")) Send(config, "setColorSpaceName:", CG.SrgbName);
@@ -234,12 +283,11 @@ internal sealed class MacCapture : IWindowCapture
         async Task StartCaptureAsync(CancellationToken ct)
         {
             var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var block = Blocks.Create("v16@?0@8", (error, _) =>
+            Blocks.Pass("v16@?0@8", (error, _) =>
             {
                 if (error != 0) tcs.TrySetException(new InvalidOperationException(Describe(error)));
                 else tcs.TrySetResult();
-            });
-            Send(_stream, "startCaptureWithCompletionHandler:", block);
+            }, block => Send(_stream, "startCaptureWithCompletionHandler:", block));
             try { await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false); }
             catch (TimeoutException) { throw new InvalidOperationException("The capture stream didn't start."); }
         }
@@ -262,6 +310,30 @@ internal sealed class MacCapture : IWindowCapture
             {
                 var f = CG.ToFrameFromPixelBuffer(pb);
                 lock (_lock) { if (seq > _convertedSeq) { _converted = f; _convertedSeq = seq; } }
+                return f;
+            }
+            finally { CG.CVPixelBufferRelease(pb); }
+        }
+
+        /// <summary>The newest picture below <paramref name="top"/>, shrunk by <paramref name="scale"/> to game pixels.</summary>
+        public async Task<Frame> LatestGameAsync(int top, int scale, CancellationToken ct)
+        {
+            LastUsed = DateTime.UtcNow;
+            try { await _first.Task.WaitAsync(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false); }
+            catch (TimeoutException) { throw new InvalidOperationException("The window's picture didn't arrive."); }
+
+            nint pb; long seq;
+            lock (_lock)
+            {
+                // the same picture comes back as the same Frame (the shared OCR caches by Frame.Id)
+                if (_seq == _gameSeq && _gameTop == top && _game != null) return _game;
+                pb = _latest; seq = _seq;
+                CG.CVPixelBufferRetain(pb);
+            }
+            try
+            {
+                var f = CG.ToGameFrameFromPixelBuffer(pb, top, scale);
+                lock (_lock) { if (seq >= _gameSeq) { _game = f; _gameSeq = seq; _gameTop = top; } }
                 return f;
             }
             finally { CG.CVPixelBufferRelease(pb); }
@@ -320,12 +392,11 @@ internal sealed class MacCapture : IWindowCapture
             if (stream != 0)
             {
                 // Release everything once the stream has really stopped, so no frame arrives at a freed object.
-                var block = Blocks.Create("v16@?0@8", (_, _) =>
+                Blocks.Pass("v16@?0@8", (_, _) =>
                 {
                     Release(stream); Release(output);
                     if (queue != 0) CG.dispatch_release(queue);
-                });
-                Send(stream, "stopCaptureWithCompletionHandler:", block);
+                }, block => Send(stream, "stopCaptureWithCompletionHandler:", block));
             }
             else
             {

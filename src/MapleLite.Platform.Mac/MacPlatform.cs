@@ -11,7 +11,8 @@ namespace MapleLite.Platform.Mac;
 ///  - OCR: Apple Vision VNRecognizeTextRequest (accurate level, en-US)
 ///  - cursor: CGEventGetLocation
 ///  - needs Screen Recording permission (CGPreflightScreenCaptureAccess / CGRequestScreenCaptureAccess)
-///  - Retina: capture is in physical pixels; GameWindow.Scale carries the backing scale factor
+///  - Retina: window geometry is in screen pixels and GameWindow.Scale carries the backing scale factor, but game
+///    frames and the cursor are shrunk back to the game's own pixels (see GamePixels), as on Windows
 /// Everything goes through P/Invoke into the system frameworks, so this project builds on any OS.
 /// </summary>
 public sealed class MacPlatform : IPlatform

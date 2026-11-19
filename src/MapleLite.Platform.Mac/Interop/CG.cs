@@ -173,6 +173,37 @@ internal static unsafe class CG
         finally { CVPixelBufferUnlockBaseAddress(pb, ReadOnly); }
     }
 
+    /// <summary>
+    /// The part of a captured window below <paramref name="top"/>, shrunk by <paramref name="scale"/>: one pixel from
+    /// each scale x scale block. On Retina macOS shows each game pixel as such a block, so this is the game's own
+    /// picture. It takes the block's bottom-right pixel: the dark line macOS draws along the top of a window's
+    /// content lies over the top row of the first blocks.
+    /// </summary>
+    public static Frame ToGameFrameFromPixelBuffer(nint pb, int top, int scale)
+    {
+        const ulong ReadOnly = 1;
+        if (CVPixelBufferLockBaseAddress(pb, ReadOnly) != 0) throw new InvalidOperationException("Couldn't read the captured picture.");
+        try
+        {
+            int w = (int)CVPixelBufferGetWidth(pb), h = (int)CVPixelBufferGetHeight(pb), stride = (int)CVPixelBufferGetBytesPerRow(pb);
+            int gw = w / scale, gh = (h - top) / scale;
+            if (gw < 1 || gh < 1) throw new InvalidOperationException("The window's picture is too small.");
+            var f = new Frame(gw, gh);
+            var px = f.Px;
+            byte* baseAddr = (byte*)CVPixelBufferGetBaseAddress(pb);
+            int off = scale - 1;
+            const int Opaque = unchecked((int)0xff000000);
+            for (int y = 0; y < gh; y++)
+            {
+                int* row = (int*)(baseAddr + (long)(top + y * scale + off) * stride);
+                int o = y * gw;
+                for (int x = 0; x < gw; x++) px[o + x] = row[x * scale + off] | Opaque;
+            }
+            return f;
+        }
+        finally { CVPixelBufferUnlockBaseAddress(pb, ReadOnly); }
+    }
+
     // ---- libdispatch ----
     [DllImport(ObjC.LibSystem)] public static extern nint dispatch_queue_create(string label, nint attr);
     [DllImport(ObjC.LibSystem)] public static extern void dispatch_release(nint obj);

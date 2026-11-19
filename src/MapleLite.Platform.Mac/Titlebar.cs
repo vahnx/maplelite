@@ -33,6 +33,12 @@ internal static class Titlebar
         return Height(id, whole.W, whole.H, scale, fullscreen);
     }
 
+    /// <summary>The height already found for this window at this size, if any.</summary>
+    public static bool TryKnown(uint id, int w, int h, out int px) => Known.TryGetValue((id, w, h), out px);
+
+    /// <summary>Replaces the remembered height for this window at this size (after the capture corrected it).</summary>
+    public static void Remember(uint id, Frame whole, int px) => Known[(id, whole.W, whole.H)] = px;
+
     /// <summary>Null when the picture can't tell (for example the top of the game is a flat color too).</summary>
     internal static int? Detect(Frame f, double scale)
     {
