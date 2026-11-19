@@ -334,6 +334,8 @@ internal sealed class PluginContext : IPluginContext
     public IOtherWindows OtherWindows { get; }
     PluginOverlay? _overlay;
     public IOverlay Overlay => _overlay ??= new PluginOverlay(_shell.Overlay, Manifest.Id);
+    PluginHotkeys? _hotkeys;
+    public IHotkeys Hotkeys => _hotkeys ??= new PluginHotkeys(_shell.Hotkeys, Manifest.Id, Track);
 
     public async Task<bool> CopyImageAsync(Frame image)
     {

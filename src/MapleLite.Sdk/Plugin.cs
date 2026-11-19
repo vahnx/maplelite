@@ -23,7 +23,7 @@ public sealed record PluginManifest(string Id, string Name, string Version, stri
 /// makes a fresh instance. Keep the constructor cheap: the host also creates one just to read the manifest.
 /// Frame and event subscriptions made through the context are cleaned up by the host on stop.
 ///
-/// What plugins get: game frames, the shared OCR, the item catalog, storage, themes, notifications.
+/// What plugins get: game frames, the shared OCR, the item catalog, storage, themes, notifications, hotkeys.
 /// What plugins never get: input to the game, game memory, packets, or their own screen capture.
 /// MapleLite is passive; plugins that automate play are not accepted.
 /// </summary>
@@ -70,6 +70,8 @@ public interface IPluginContext
     Task<bool> CopyImageAsync(MapleLite.Core.Imaging.Frame image);
     /// <summary>Labels drawn over the game window, when the user has overlays turned on. See <see cref="IOverlay"/>.</summary>
     IOverlay Overlay { get; }
+    /// <summary>System-wide keyboard shortcuts (for actions taken while playing). See <see cref="IHotkeys"/>.</summary>
+    IHotkeys Hotkeys { get; }
     /// <summary>A short message in the host's notification area.</summary>
     void Notify(string message);
     void Log(string message);

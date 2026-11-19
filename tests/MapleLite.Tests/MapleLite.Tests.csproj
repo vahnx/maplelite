@@ -15,5 +15,6 @@
     <ProjectReference Include="..\..\plugins\MapleLite.Plugins.ChatHistory\MapleLite.Plugins.ChatHistory.csproj" />
     <ProjectReference Include="..\..\plugins\MapleLite.Plugins.Loot\MapleLite.Plugins.Loot.csproj" />
     <ProjectReference Include="..\..\plugins\MapleLite.Plugins.SpawnTimer\MapleLite.Plugins.SpawnTimer.csproj" />
+    <ProjectReference Include="..\..\plugins\MapleLite.Plugins.Camera\MapleLite.Plugins.Camera.csproj" />
   </ItemGroup>
 </Project>

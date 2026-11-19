@@ -48,6 +48,9 @@ internal sealed class OverlayService : IDisposable
         _layers[layer] = items; _dirty = true;
     }
     public void Clear(string layer) { _layers.TryRemove(layer, out _); _dirty = true; }
+    /// <summary>Every plugin's items (not the test pattern, nor <paramref name="except"/>'s layer), drawn or not.</summary>
+    public IReadOnlyList<OverlayItem> Everything(string? except = null) =>
+        _layers.Where(l => l.Key != TestLayer && l.Key != except).SelectMany(l => l.Value).ToList();
 
     /// <summary>
     /// Saves the latest game picture with every layer drawn on it, as the overlay shows it (for screenshots and checks:
@@ -297,5 +300,6 @@ internal sealed class PluginOverlay(OverlayService service, string layer) : IOve
     public string? Status => service.Status;
     public void Draw(IReadOnlyList<OverlayItem> items) { if (!_closed) service.Draw(layer, items); }
     public void Clear() => service.Clear(layer);
+    public IReadOnlyList<OverlayItem> Everything() => service.Everything(except: layer);
     public void Close() { _closed = true; service.Clear(layer); }
 }

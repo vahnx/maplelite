@@ -26,7 +26,7 @@ reads game memory, captures packets, or sends input to the game, and neither can
 | `src/MapleLite.Platform.Mac` | macOS: window finding, ScreenCaptureKit capture, Apple Vision OCR, clipboard. Not yet run against the native client. |
 | `src/MapleLite.Platform.Linux` | Linux (milestone 5): X11/XComposite for the Wine/Proton window, Tesseract OCR. Stub today. |
 | `src/MapleLite.Host` | The Avalonia app: Game page, plugin pages, Settings, themes, plugin loader. |
-| `plugins/*` | Bundled plugins: Chat History (the MapleMemory app, ported), Loot, Shop Card, XP Tracker, Respawn Timer. |
+| `plugins/*` | Bundled plugins: Chat History (the MapleMemory app, ported), Loot, Shop Card, XP Tracker, Respawn Timer, Camera. |
 | `samples/HelloPlugin` | A minimal third-party plugin to copy. |
 | `tests/MapleLite.Tests` | xUnit tests on fake engines and synthetic frames (never the live game). |
 
@@ -60,8 +60,17 @@ the tokens too, so the host and every plugin page restyle live. Users add themes
 
 ## Overlays
 
-Not built, off by default. See [docs/OVERLAYS.md](docs/OVERLAYS.md) for the safety rules (never inside the game
-process, display-only and click-through, unavailable in exclusive fullscreen) and the decisions still open.
+Windows only so far, off by default (Settings → Overlay). See [docs/OVERLAYS.md](docs/OVERLAYS.md) for the safety
+rules (never inside the game process, display-only and click-through, unavailable in exclusive fullscreen).
+Plugins can also bake what the overlay shows into pictures on purpose: `context.Overlay.Everything()` returns the other
+plugins' items and `OverlayPainter` draws them with SkiaSharp (Camera uses this for "include respawn timers").
+
+## Hotkeys
+
+Plugins can register system-wide shortcuts with `context.Hotkeys.Register("Snapshot", "Ctrl+Alt+S", action)`, so actions
+work while the game is in front. On Windows they are `RegisterHotKey` registrations on MapleLite's own thread: no keyboard
+hooks, nothing loaded into the game, no input sent anywhere. While MapleLite runs, the game doesn't receive those
+combinations. macOS and Linux report `Supported = false` for now (plugins keep their buttons).
 
 ## Download or build in one step
 
@@ -242,6 +251,33 @@ their prices and stats, merging into the item's inventory card when there is one
 them listings again. If the shop closed while MapleLite wasn't watching, Settings → **Move shop listings back** does
 it by hand. Identical listings on separate scroll pages cannot always be told apart, and the selected source filter
 is remembered.
+
+## Camera
+
+Snapshots, instant replay and recordings of the game, plus an editor for looks and overlays. Everything comes from the
+shared capture loop (the game window's own picture), so MapleLite's overlay is never in a capture unless you switch it on.
+
+- **Snapshot** (Ctrl+Alt+S): a lossless PNG of the game.
+- **Instant replay** (Ctrl+Alt+R): saves the last 15 s (5–120, set in the page). With ffmpeg it's encoded as it
+  happens into 2-second H.264 pieces in the data folder (older pieces are deleted), and saving closes the current piece
+  and joins them without re-encoding: almost no memory, every frame kept, the clip runs up to the moment you pressed
+  save. Without ffmpeg it's kept in memory as full-color JPEGs (about 0.5–0.7 MB a picture at 1680x944).
+- **Record** (Ctrl+Alt+V to start and stop): runs until you stop it. With [ffmpeg](https://ffmpeg.org) installed
+  (`winget install ffmpeg`, `brew install ffmpeg`) recordings are H.264 MP4s. Measured on 1680x944 game footage
+  (worst case, lots of motion): **High** (CRF 16, plays everywhere) about 14 Mbit/s with a mean error of 4/255;
+  **Sharpest** (CRF 12, full-color 4:4:4 for crisp small text) about 24 Mbit/s, error 2.4/255; **Lossless** exact
+  pixels but about 350 Mbit/s. Without ffmpeg they are folders of full-color JPEG frames in the same layout as session
+  recordings (so `--replay` plays them too).
+- **Editor** (Edit on any gallery item): looks (black & white, noir, sepia, vintage, warm, cool, vivid, dreamy, night,
+  retro 8-bit, invert) with strength, brightness/contrast/saturation/warmth/vignette, frames (simple, Polaroid with a
+  caption, film, maple, postcard "Greetings from <map>", neon, rounded), text in four styles, freehand drawing, crop
+  with aspect presets, a film-camera date stamp, and other plugins' overlay items as they were at the time (respawn
+  timers, …). Clips get the same tools plus trimming, and export to MP4 (ffmpeg) or GIF (built in: a palette per frame
+  and only changed areas stored, so they stay small). Edits are saved beside each capture and exports get
+  " (edited)" names: originals are never changed.
+
+Captures go to `Pictures/MapleLite` (changeable); MapleLite's notes about them (edits, overlay items, thumbnails) live
+in `plugins/camera/media/` in the data folder. Hotkeys are Windows-only for now; the buttons work everywhere.
 
 ## Managing plugins
 

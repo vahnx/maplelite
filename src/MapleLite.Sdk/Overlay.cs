@@ -18,6 +18,12 @@ public interface IOverlay
     void Draw(IReadOnlyList<OverlayItem> items);
     /// <summary>Removes everything this plugin draws.</summary>
     void Clear();
+    /// <summary>
+    /// What the other plugins draw right now (every layer but this plugin's, whether or not the overlay is showing), in game-picture
+    /// coordinates. For baking the overlay into pictures on purpose, e.g. a snapshot "with respawn timers";
+    /// draw them with <see cref="OverlayPainter"/>.
+    /// </summary>
+    IReadOnlyList<OverlayItem> Everything();
 }
 
 public enum OverlayTone { Normal, Accent, Good, Warning, Danger, Muted }

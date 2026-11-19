@@ -18,6 +18,7 @@ internal static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => WriteCrashLog(e.ExceptionObject);
         var ocrTest = Arg(args, "--ocrtest");
         if (ocrTest != null) return OcrTest(ocrTest, Arg(args, "--out"));
         Options.ReplayPath = Arg(args, "--replay");
@@ -31,6 +32,23 @@ internal static class Program
         Options.UninstallId = Arg(args, "--uninstall");
         if (double.TryParse(Arg(args, "--wait"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var wait)) Options.SnapshotWait = wait;
         return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+    }
+
+    /// <summary>
+    /// Saves what killed the app to crash.log in the data folder (and prints it), so a crash can be reported.
+    /// Native crashes inside the OS frameworks don't come through here; macOS shows those in its own crash report.
+    /// </summary>
+    static void WriteCrashLog(object error)
+    {
+        var text = $"MapleLite crashed at {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz} on {Environment.OSVersion}:{Environment.NewLine}{error}{Environment.NewLine}";
+        try { Console.Error.WriteLine(text); } catch { }
+        try
+        {
+            var path = Path.Combine(MapleLite.Core.AppPaths.Root, "crash.log");
+            File.WriteAllText(path, text);
+            Console.Error.WriteLine("Saved to " + path);
+        }
+        catch { }
     }
 
     public static AppBuilder BuildAvaloniaApp() => AppBuilder.Configure<App>().UsePlatformDetect().LogToTrace();

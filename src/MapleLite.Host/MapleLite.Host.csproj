@@ -51,7 +51,7 @@
     and copies their own assembly (Core, Sdk and Avalonia always come from the host).
   -->
   <ItemGroup>
-    <BundledPlugin Include="MapleLite.Plugins.ChatHistory;MapleLite.Plugins.Loot;MapleLite.Plugins.SaleCard;MapleLite.Plugins.XpTracker;MapleLite.Plugins.SpawnTimer" />
+    <BundledPlugin Include="MapleLite.Plugins.ChatHistory;MapleLite.Plugins.Loot;MapleLite.Plugins.SaleCard;MapleLite.Plugins.XpTracker;MapleLite.Plugins.SpawnTimer;MapleLite.Plugins.Camera" />
     <ProjectReference Include="@(BundledPlugin->'$(MSBuildThisFileDirectory)..\..\plugins\%(Identity)\%(Identity).csproj')"
                       ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>

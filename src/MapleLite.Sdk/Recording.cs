@@ -68,8 +68,15 @@ public static class Recording
         public long Bytes => Interlocked.Read(ref _bytes);
         public TimeSpan Elapsed => DateTimeOffset.Now - _started;
 
-        public Writer(string folder, Info info)
+        readonly int _jpegQuality;
+
+        /// <param name="jpegQuality">
+        /// Null (the default) saves lossless PNGs. A quality (1–100) saves full-color (4:4:4) JPEGs instead: at 92–95
+        /// they look the same as the game and are several times smaller and quicker to write, for long recordings.
+        /// </param>
+        public Writer(string folder, Info info, int? jpegQuality = null)
         {
+            _jpegQuality = jpegQuality is { } q ? Math.Clamp(q, 1, 100) : 0;
             Folder = folder;
             Directory.CreateDirectory(Path.Combine(folder, FramesDir));
             _started = info.Started;
@@ -100,7 +107,7 @@ public static class Recording
                 if (previous != null && previousFile != null && Same(previous, frame)) file = previousFile;
                 else
                 {
-                    file = $"{FramesDir}/{_saved:D6}.png";
+                    file = $"{FramesDir}/{_saved:D6}.{(_jpegQuality > 0 ? "jpg" : "png")}";
                     _saved++;
                     previous = frame; previousFile = file;
                     _encoders.Wait();
@@ -109,7 +116,7 @@ public static class Recording
                     {
                         try
                         {
-                            var bytes = FrameFiles.EncodePng(frame, fast: true);
+                            var bytes = _jpegQuality > 0 ? FrameFiles.EncodeJpeg(frame, _jpegQuality) : FrameFiles.EncodePng(frame, fast: true);
                             File.WriteAllBytes(path, bytes);
                             Interlocked.Add(ref _bytes, bytes.Length);
                         }

@@ -28,6 +28,8 @@ internal sealed class Shell : IAsyncDisposable
     public OverlayService Overlay { get; set; } = null!;
     /// <summary>Records the game picture for replaying later (Game page).</summary>
     public SessionRecorder Recorder { get; }
+    /// <summary>System-wide shortcuts for plugins (Windows).</summary>
+    public HotkeyService Hotkeys { get; }
     public event Action<string>? Notified;
     readonly string _logPath = Path.Combine(AppPaths.Root, "maplelite.log");
 
@@ -45,6 +47,7 @@ internal sealed class Shell : IAsyncDisposable
         Events.OnHandlerError = e => Log("event handler failed: " + e);
         Plugins = new PluginManager(this);
         Recorder = new SessionRecorder(this);
+        Hotkeys = new HotkeyService(Log);
     }
 
     public void SetTarget(GameTarget target)
@@ -79,6 +82,7 @@ internal sealed class Shell : IAsyncDisposable
             },
             TimeSpan.FromSeconds(10));
         Overlay?.Dispose();
+        Hotkeys.Dispose();
         await report(92, "Stopping capture…");
         await Map.DisposeAsync();
         await Capture.DisposeAsync();
