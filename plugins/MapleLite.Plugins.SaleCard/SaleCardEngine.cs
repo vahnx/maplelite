@@ -1403,6 +1403,8 @@ public sealed class SaleCardEngine
     {
         for (int n = read.Names.Length; n >= 1; n--)
             if (ResolveName(string.Join(" ", read.Names.Take(n)), read.Truncated && n == 1 || read.Truncated && read.Names.Length == n) is > 0 and var id) return id;
+        // a list that leaves the grade out of the name ("Shoes Speed Scroll" for each of its grades): the row's icon tells which
+        if (Vision != null && !read.Truncated && read.Names.Length > 0) return Vision.ByIcon(read.Names[0], read.Icon);
         return 0;
     }
 

@@ -66,6 +66,112 @@ public sealed class Vision
     public string? IconPath(int id) => _items.IconPath(id);
     public string Name(int id) => Catalog.TryGetValue(id, out var c) ? c.name : "";
 
+    // ---------------------------------------------------------------- an item's grade by its icon's colours
+
+    const int Bins = 4;   // levels per colour channel: 64 colour boxes in all
+
+    /// <summary>The share of an icon's pixels in each colour box. Near-black outline pixels don't count.</summary>
+    static float[]? Colours(IEnumerable<int> pixels)
+    {
+        var h = new float[Bins * Bins * Bins];
+        int n = 0;
+        foreach (int p in pixels)
+        {
+            if (Math.Max(R(p), Math.Max(G(p), B(p))) < 50) continue;
+            h[R(p) * Bins / 256 * Bins * Bins + G(p) * Bins / 256 * Bins + B(p) * Bins / 256]++;
+            n++;
+        }
+        if (n < 20) return null;
+        for (int i = 0; i < h.Length; i++) h[i] /= n;
+        return h;
+    }
+
+    readonly Dictionary<int, float[]?> _iconColours = new();
+
+    /// <summary>The colours of an item's own icon (its drawn pixels only).</summary>
+    float[]? IconColours(int id)
+    {
+        lock (_iconColours)
+        {
+            if (_iconColours.TryGetValue(id, out var c)) return c;
+            var t = _templates.Find(x => x.Id == id);
+            return _iconColours[id] = t == null ? null : Colours(t.Px.Where(p => (p >>> 24) >= 250));
+        }
+    }
+
+    /// <summary>
+    /// The colours of an icon as drawn on a page, inside its box. The box's own fill is what runs along the edge of
+    /// the picture: those colours are left out, so what is left is the icon.
+    /// </summary>
+    static float[]? PageColours(Frame icon)
+    {
+        var edge = new List<int>();
+        for (int x = 0; x < icon.W; x++) { edge.Add(icon.At(x, 0)); edge.Add(icon.At(x, icon.H - 1)); }
+        for (int y = 1; y < icon.H - 1; y++) { edge.Add(icon.At(0, y)); edge.Add(icon.At(icon.W - 1, y)); }
+        // the fill colours: those making up a good part of the edge
+        var fills = edge.GroupBy(p => (R(p) / 16, G(p) / 16, B(p) / 16)).Where(g => g.Count() >= edge.Count / 10).Select(g => g.First()).ToList();
+        return Colours(icon.Px.Where(p => !fills.Any(f => Near(p, f, 24))));
+    }
+
+    /// <summary>How alike two colour make-ups are, 0 (nothing shared) to 1 (the same).</summary>
+    static double Overlap(float[] a, float[] b)
+    {
+        double s = 0;
+        for (int i = 0; i < a.Length; i++) s += Math.Min(a[i], b[i]);
+        return s;
+    }
+
+    static string Key(string s) => System.Text.RegularExpressions.Regex.Replace(s.ToUpperInvariant(), "[^A-Z0-9]", "");
+
+    /// <summary>
+    /// Which item a list row stands for when the list names it without its grade ("Shoes Speed Scroll" for the
+    /// Lesser, Intermediate, Greater and Chaos ones): the items named that plus one more word, told apart by the
+    /// row's icon. 0 unless one of them clearly matches the icon.
+    /// </summary>
+    public int ByIcon(string name, Frame? icon)
+    {
+        if (icon == null) return 0;
+        var scored = IconScores(name, icon);
+        if (scored.Count == 0) return 0;
+        double next = scored.Count > 1 ? scored[1].score : 0;
+        return scored[0].score >= MinIconOverlap && scored[0].score - next >= MinIconLead ? scored[0].id : 0;
+    }
+
+    internal const double MinIconOverlap = 0.4, MinIconLead = 0.15;
+
+    /// <summary>
+    /// Each candidate's likeness to the row's icon, best first. The grades' icons share most of their colours (the
+    /// same paper): only what sets each apart is compared, as the share of it found in the row's icon.
+    /// </summary>
+    public IReadOnlyList<(int id, double score)> IconScores(string name, Frame icon)
+    {
+        var words = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string key = Key(name);
+        if (key.Length < 6 || words.Length < 2) return [];
+        var page = PageColours(icon);
+        if (page == null) return [];
+        var cands = Catalog.Values
+            .Where(c => { var cw = c.name.Split(new[] { ' ', ':' }, StringSplitOptions.RemoveEmptyEntries); return cw.Length == words.Length + 1 && Key(string.Join("", cw.Take(words.Length))) == key; })
+            .Select(c => (c.id, colours: IconColours(c.id))).Where(c => c.colours != null).ToList();
+        if (cands.Count == 0) return [];
+        if (cands.Count == 1) return [(cands[0].id, Overlap(page, cands[0].colours!))];
+        // the colours every candidate has (in the smallest share any of them has it) are left out of each
+        var shared = new float[page.Length];
+        for (int i = 0; i < shared.Length; i++) shared[i] = cands.Min(c => c.colours![i]);
+        var pageOwn = page.Select((v, i) => Math.Max(0, v - shared[i])).ToArray();
+        return cands.Select(c =>
+        {
+            double own = 0, found = 0;
+            for (int i = 0; i < page.Length; i++)
+            {
+                double d = c.colours![i] - shared[i];
+                own += d;
+                found += Math.Min(d, pageOwn[i]);
+            }
+            return (c.id, score: own > 0.02 ? found / own : 0);
+        }).OrderByDescending(x => x.score).ToList();
+    }
+
     static int R(int p) => (p >> 16) & 255;
     static int G(int p) => (p >> 8) & 255;
     static int B(int p) => p & 255;

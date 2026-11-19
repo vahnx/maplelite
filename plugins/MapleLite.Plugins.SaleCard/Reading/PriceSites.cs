@@ -327,7 +327,7 @@ public static class PriceSites
                 long v = darkFigures ? await CheckedFigure(ocr, f, p.Text, px0, px1, (int)p.Cy()) : Prices(p.Text)[^1];
                 if (v <= 0) continue;
                 used.UnionWith(mine);
-                reads.Add(new SiteRead(mine.Select(n => n.Text).ToArray(), mine.Any(n => n.Right() >= nx1 - 14), Typical: v));
+                reads.Add(new SiteRead(mine.Select(n => n.Text).ToArray(), mine.Any(n => n.Right() >= nx1 - 14), Typical: v) { Icon = darkFigures ? RowIcon(f, mine[0]) : null });
             }
             // rows whose figure the column read missed altogether: read their cell on its own
             if (darkFigures)
@@ -338,11 +338,51 @@ public static class PriceSites
                     long v = await CheckedFigure(ocr, f, "", px0, px1, (int)n.Cy() + 6);
                     if (v <= 0) continue;
                     used.UnionWith(mine);
-                    reads.Add(new SiteRead(mine.Select(o => o.Text).ToArray(), mine.Any(o => o.Right() >= nx1 - 14), Typical: v));
+                    reads.Add(new SiteRead(mine.Select(o => o.Text).ToArray(), mine.Any(o => o.Right() >= nx1 - 14), Typical: v) { Icon = RowIcon(f, mine[0]) });
                 }
             break;
         }
         return reads;
+    }
+
+    /// <summary>
+    /// The icon drawn left of a list row's name, inside its box (MesoWatch). The box is found, not assumed: going left
+    /// from the name, past the row's background, the first stretch of columns that differ from it is the box. Its
+    /// border is trimmed off, so what is left is the icon on the box's fill.
+    /// </summary>
+    static Frame? RowIcon(Frame f, OcrLine name)
+    {
+        int h = Math.Max(8, (int)name.Box.Height);
+        int y0 = Math.Max(0, (int)name.Cy() - 2 * h), y1 = Math.Min(f.H, (int)name.Cy() + 3 * h);
+        int start = (int)name.Left() - 2;
+        if (start < 4 || y1 - y0 < 10) return null;
+        // the row's background: the commonest colour just left of the name (the name's own letters are few)
+        var strip = new List<int>();
+        for (int y = y0; y < y1; y++) { strip.Add(f.At(start - 1, y)); strip.Add(f.At(start - 3, y)); }
+        int bg = strip.GroupBy(p => p & 0xFFFFFF).OrderByDescending(g => g.Count()).First().Key;
+        static bool Differs(int a, int b) => Math.Abs(((a >> 16) & 255) - ((b >> 16) & 255)) + Math.Abs(((a >> 8) & 255) - ((b >> 8) & 255)) + Math.Abs((a & 255) - (b & 255)) > 40;
+        int Count(int x) { int n = 0; for (int y = y0; y < y1; y++) if (Differs(f.At(x, y), bg)) n++; return n; }
+        // the box's right border: the first tall column left of the name
+        int need = Math.Max(6, h), right = -1;
+        for (int x = start - 2; x >= Math.Max(0, start - 6 * h); x--) if (Count(x) >= need) { right = x; break; }
+        if (right < 0) return null;
+        // its left border: the furthest column as tall as the right one, within a box's width (the box's inside
+        // can match the background, so the columns between don't have to stand out)
+        int tall = Count(right), left = -1;
+        for (int x = right - 10; x >= Math.Max(0, right - 4 * h); x--) if (Count(x) >= tall * 0.7) left = x;
+        if (left < 0 || right - left < 10) return null;
+        // the box's top and bottom: the rows within its columns that differ from the background
+        int top = -1, bottom = -1;
+        for (int y = y0; y < y1; y++)
+        {
+            int n = 0;
+            for (int xx = left; xx <= right; xx++) if (Differs(f.At(xx, y), bg)) n++;
+            if (n >= (right - left) / 2) { if (top < 0) top = y; bottom = y; }
+        }
+        if (top < 0 || bottom - top < 10) return null;
+        int inset = Math.Max(3, (right - left) / 7);
+        var r = new Region(left + inset, top + inset, right - left + 1 - 2 * inset, bottom - top + 1 - 2 * inset);
+        return r.Width >= 8 && r.Height >= 8 ? f.Crop(r) : null;
     }
 
     /// <summary>
@@ -389,10 +429,16 @@ public static class PriceSites
         if (cell.Width < 10 || cell.Height < 10) return 0;
         // count from just past the gold coin: at some zoom levels its dark rim would count as a character
         static bool Gold(int p) => ((p >> 16) & 255) > 170 && ((p >> 8) & 255) > 120 && (p & 255) < 110 && ((p >> 16) & 255) - (p & 255) > 90;
+        // The coin is the first solid gold column; it ends where the gold stops. Only the coin, not any goldish pixel
+        // further on: the soft edges of brown lettering can pass for gold, and skipping to those would hide the figure.
+        int GoldIn(int x) { int n = 0; for (int y = cell.Y; y < cell.Bottom; y++) if (Gold(f.At(x, y))) n++; return n; }
         int coinRight = -1;
-        for (int x = cell.X; x < cell.Right; x++)
-            for (int y = cell.Y; y < cell.Bottom; y++)
-                if (Gold(f.At(x, y))) { coinRight = x; break; }
+        for (int x = cell.X; x < cell.Right && coinRight < 0; x++)
+            if (GoldIn(x) >= 3)
+            {
+                coinRight = x;
+                while (coinRight + 1 < cell.Right && GoldIn(coinRight + 1) > 0) coinRight++;
+            }
         if (coinRight >= 0 && coinRight + 3 < cell.Right) cell = new Region(coinRight + 3, cell.Y, cell.Right - coinRight - 3, cell.Height);
         int glyphs = ImageOps.CountInkRuns(f, cell, Dark);
         var first = LastFigure(columnText);

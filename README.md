@@ -258,7 +258,7 @@ Snapshots, instant replay and recordings of the game, plus an editor for looks a
 shared capture loop (the game window's own picture), so MapleLite's overlay is never in a capture unless you switch it on.
 
 - **Snapshot** (Ctrl+Alt+S): a lossless PNG of the game.
-- **Instant replay** (Ctrl+Alt+R): saves the last 15 s (5–120, set in the page). With ffmpeg it's encoded as it
+- **Instant replay** (Ctrl+Alt+R, off by default: turn it on in the Camera page): saves the last 15 s (5–120, set in the page). While on it works continuously (with ffmpeg about a third of a CPU core and ~6 GB an hour of disk writes). With ffmpeg it's encoded as it
   happens into 2-second H.264 pieces in the data folder (older pieces are deleted), and saving closes the current piece
   and joins them without re-encoding: almost no memory, every frame kept, the clip runs up to the moment you pressed
   save. Without ffmpeg it's kept in memory as full-color JPEGs (about 0.5–0.7 MB a picture at 1680x944).

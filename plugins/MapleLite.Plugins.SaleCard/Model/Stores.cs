@@ -321,7 +321,11 @@ public sealed class SitePrice
 }
 
 /// <summary>One item as read off a page. Names holds the text lines found beside the price, top to bottom.</summary>
-public sealed record SiteRead(string[] Names, bool Truncated, long Last = 0, long Avg3 = 0, long Median10 = 0, long Typical = 0);
+public sealed record SiteRead(string[] Names, bool Truncated, long Last = 0, long Avg3 = 0, long Median10 = 0, long Typical = 0)
+{
+    /// <summary>The item's icon beside the name, when the list shows one: it tells apart items listed under one name (a scroll's grades).</summary>
+    public MapleLite.Core.Imaging.Frame? Icon { get; init; }
+}
 
 /// <summary>Figures read off price sites while you had them open, kept on this computer only.</summary>
 public sealed class SitePrices
@@ -353,6 +357,14 @@ public sealed class SitePrices
                 Last = r.Last > 0 ? r.Last : old?.Last ?? 0, Avg3 = r.Avg3 > 0 ? r.Avg3 : old?.Avg3 ?? 0,
                 Median10 = r.Median10 > 0 ? r.Median10 : old?.Median10 ?? 0, Typical = r.Typical > 0 ? r.Typical : old?.Typical ?? 0, Utc = DateTime.UtcNow,
             };
+            // A typical price twenty times off what the item actually sold for is a misread (kept "2" beside sales
+            // of 8,999): the sale figures agree with each other, so they win and the typical one is dropped.
+            long[] sales = new[] { now.Last, now.Avg3, now.Median10 }.Where(v => v > 0).Order().ToArray();
+            if (now.Typical > 0 && sales.Length > 0)
+            {
+                long mid = sales[sales.Length / 2];
+                if (now.Typical * 20 < mid || now.Typical > mid * 20) now.Typical = 0;
+            }
             if (old != null && old.Last == now.Last && old.Avg3 == now.Avg3 && old.Median10 == now.Median10 && old.Typical == now.Typical) return false;
             s[id] = now;
             return true;

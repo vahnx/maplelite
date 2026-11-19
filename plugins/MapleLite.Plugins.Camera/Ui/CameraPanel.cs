@@ -81,7 +81,7 @@ internal sealed class CameraPanel : ContentControl
         _replay.Content = _p.SavingReplay ? "Saving replay…" : $"Save last {_p.Settings.ReplaySeconds} s";
         _replayLine.Text = _p.Replay is { } r
             ? $"Instant replay is holding {r.Held.TotalSeconds:0} s ({r.Bytes / 1048576.0:0} MB {(r.OnDisk ? "of MP4 on disk" : "in memory")})."
-            : "Instant replay is off.";
+            : "Instant replay is off. Turn it on in Settings below.";
 
         var keys = new[] { _p.SnapshotKey, _p.ReplayKey, _p.RecordKey }.Where(k => k?.Active == true).Select(k => $"{k!.Gesture} {k.Name.ToLowerInvariant()}");
         var status = _p.Ctx.Frames.Status;
@@ -192,7 +192,7 @@ internal sealed class CameraPanel : ContentControl
             ? "Hotkeys are registered with Windows (no keyboard hooks, nothing sent to the game). While MapleLite runs, the game doesn't get these combinations, so pick ones it doesn't use."
             : "Hotkeys only work on Windows so far: use the buttons above.");
 
-        var replayOn = new CheckBox { Content = "Keep an instant replay (the last few seconds, in memory)", IsChecked = s.ReplayOn };
+        var replayOn = new CheckBox { Content = "Keep an instant replay (uses some CPU, and memory or disk, the whole time it's on)", IsChecked = s.ReplayOn };
         var seconds = new NumericUpDown { Minimum = 5, Maximum = 120, Increment = 5, Value = s.ReplaySeconds, FormatString = "0", Width = 130 };
         var replayFps = Choice([10, 15, 20, 30], s.ReplayFps, v => $"{v:0} per second");
         replayOn.IsCheckedChanged += (_, _) => { s.ReplayOn = replayOn.IsChecked == true; _p.SaveSettings(); _p.ApplyReplay(); };
@@ -241,7 +241,9 @@ internal sealed class CameraPanel : ContentControl
             Text("Hotkeys", ThemeTokens.Text, 13, FontWeight.SemiBold), hotkeys, hotkeyNote,
             Text("Instant replay", ThemeTokens.Text, 13, FontWeight.SemiBold), replayOn,
             Wrap(Stack(4, Muted("Seconds kept"), seconds), Stack(4, Muted("Pictures"), replayFps)),
-            Muted("With ffmpeg, the replay is compressed as it happens into short MP4 pieces on disk (at the MP4 quality below) and saving just joins them: "
+            Muted("Off by default, because it works the whole time it's on: with ffmpeg, about a third of one CPU core and roughly 6 GB an hour written to disk "
+                + "(old pieces are deleted as it goes). "
+                + "With ffmpeg, the replay is compressed as it happens into short MP4 pieces on disk (at the MP4 quality below) and saving just joins them: "
                 + "almost no memory, every frame kept, and no extra quality loss. Without ffmpeg it's kept in memory as full-color JPEGs, "
                 + "about 0.5–0.7 MB a picture at 1680x944, so 15 s at 15 per second holds roughly 120–160 MB."),
             Text("Recording", ThemeTokens.Text, 13, FontWeight.SemiBold),

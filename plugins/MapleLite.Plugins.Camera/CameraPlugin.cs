@@ -20,7 +20,8 @@ public sealed class CameraSettings
     public string? ReplayKey { get; set; } = "Ctrl+Alt+R";
     public string? RecordKey { get; set; } = "Ctrl+Alt+V";
 
-    public bool ReplayOn { get; set; } = true;
+    /// <summary>Off by default: while on, the replay encodes (or holds) the game picture the whole time MapleLite runs.</summary>
+    public bool ReplayOn { get; set; }
     public int ReplaySeconds { get; set; } = 15;
     public double ReplayFps { get; set; } = 15;
     public double RecordFps { get; set; } = 30;

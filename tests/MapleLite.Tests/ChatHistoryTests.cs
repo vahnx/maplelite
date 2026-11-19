@@ -152,6 +152,31 @@ public class ChatGlyphTests
         Array.Fill(pink.Px, unchecked((int)0xffe0adc8));
         Assert.Equal(pink.Px[0], OcrPreprocessor.ChatGlyphs.Apply(pink).Px[0]);
     }
+
+    // The game's own lines ("Bronze Ore x8 earned. (Etc)") are grey, about 190, over the dim chat panel.
+    [Fact]
+    public void Grey_system_text_is_kept_over_the_dim_panel()
+    {
+        var row = new Frame(20, 1);
+        Array.Fill(row.Px, Pixel.Rgb(60, 60, 64));
+        row.Px[5] = Pixel.Rgb(190, 190, 190);
+        row.Px[6] = Pixel.Rgb(150, 150, 150); // a dim edge stays background
+        var o = OcrPreprocessor.ChatGlyphs.Apply(row);
+        Assert.Equal(Pixel.Black, o.Px[5]);
+        Assert.Equal(Pixel.White, o.Px[6]);
+        Assert.Equal(Pixel.White, o.Px[0]);
+    }
+
+    [Fact]
+    public void Over_a_bright_scene_only_white_text_counts()
+    {
+        var row = new Frame(20, 1);
+        Array.Fill(row.Px, Pixel.Rgb(185, 185, 190)); // snow behind the panel
+        row.Px[5] = Pixel.Rgb(250, 250, 250);
+        var o = OcrPreprocessor.ChatGlyphs.Apply(row);
+        Assert.Equal(Pixel.Black, o.Px[5]);
+        Assert.Equal(Pixel.White, o.Px[0]);
+    }
 }
 
 [Collection("ChatParser")]

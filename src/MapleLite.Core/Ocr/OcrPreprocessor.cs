@@ -81,19 +81,25 @@ public sealed class OcrPreprocessor(string key, Func<Frame, Frame> apply)
     /// The game's chat box: a translucent panel that dims the world behind it while the letters stay bright.
     /// Bright glyphs become black on white. Rows that look like megaphone banners (colored backgrounds
     /// with dark lettering) are left untouched, since thresholding would erase them.
-    /// Ported from MapleMemory's PrepareChat.
+    /// Ported from MapleMemory's PrepareChat. The game's own lines ("Red Potion x5 earned.", "... has been lost.")
+    /// are grey, about 190 bright, so over the usual dim panel anything well above the row's background counts
+    /// as a glyph (from 170). Over a bright scene the cutoff stays at 220, where it always was.
     /// </summary>
     public static readonly OcrPreprocessor ChatGlyphs = new("chat-glyphs", f =>
     {
         var o = f.Clone();
+        Span<int> hist = stackalloc int[256];
         for (int y = 0; y < o.H; y++)
         {
             int brightBackground = 0;
+            hist.Clear();
             for (int x = 0; x < o.W; x++)
             {
                 int p = o.At(x, y);
+                hist[Pixel.Max(p)]++;
                 if (Pixel.Max(p) > 180 && Pixel.Chroma(p) > 65) brightBackground++;
             }
+            int cutoff = ChatCutoff(hist, o.W);
             int bannerEdges = 0;
             foreach (int x in new[] { 0, 1, Math.Max(0, o.W - 2), o.W - 1 })
             {
@@ -102,8 +108,20 @@ public sealed class OcrPreprocessor(string key, Func<Frame, Frame> apply)
             }
             if (brightBackground > o.W * .45 || bannerEdges >= 3) continue;
             for (int x = 0; x < o.W; x++)
-                o.Px[y * o.W + x] = Pixel.Max(o.At(x, y)) >= 220 ? Pixel.Black : Pixel.White;
+                o.Px[y * o.W + x] = Pixel.Max(o.At(x, y)) >= cutoff ? Pixel.Black : Pixel.White;
         }
         return o;
     });
+
+    /// <summary>
+    /// How bright a chat pixel must be to count as a glyph: 60 above the row's background (its median, since letters
+    /// cover little of a row), at least 170 and at most 220.
+    /// </summary>
+    internal static int ChatCutoff(ReadOnlySpan<int> hist, int count)
+    {
+        int median = 0;
+        for (int seen = 0; median < 255; median++)
+            if ((seen += hist[median]) * 2 >= count) break;
+        return Math.Clamp(median + 60, 170, 220);
+    }
 }
