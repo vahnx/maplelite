@@ -398,6 +398,14 @@ public sealed class SaleCardEngine
             var frame = Latest();
             if (frame == null || !Monitoring) return;
             if (ChannelReader.Read(frame) is int ch && ch.ToString() != S.Channel) { S.Channel = ch.ToString(); CardChanged?.Invoke(); Changed?.Invoke(); }
+            // The minimap at its middle size hides the map's name: the card follows and leaves the location off. While the
+            // minimap isn't showing at all, the last choice stands.
+            var minimap = MapReader.State(frame);
+            if (minimap is MinimapState.Full or MinimapState.NameHidden && (minimap == MinimapState.NameHidden) != S.MapNameHidden)
+            {
+                S.MapNameHidden = minimap == MinimapState.NameHidden;
+                CardChanged?.Invoke(); Changed?.Invoke();
+            }
             // The minimap picture: your dot moves all the time, so the card is refreshed with it every few seconds at most.
             if (MapReader.Picture(frame) is { } pic && (_mapPx == null || pic.w != _mapW || pic.h != _mapH ||
                 (DateTime.UtcNow - _mapAt > TimeSpan.FromSeconds(5) && !pic.px.AsSpan().SequenceEqual(_mapPx))))
@@ -1486,7 +1494,7 @@ public sealed class SaleCardEngine
                 .Where(s => S.SourceOn(s.Item1)).Select(s => s.Item2)) : "";
         var options = new CardOptions
         {
-            Title = S.Title, Seller = S.Seller, Server = S.Server, Channel = S.Channel, Location = S.Location, Tagline = S.Tagline ?? "",
+            Title = S.Title, Seller = S.Seller, Server = S.Server, Channel = S.Channel, Location = S.MapNameHidden ? "" : S.Location, Tagline = S.Tagline ?? "",
             Avatar = S.NoAvatar ? null : AvatarFor(S.Seller), Map = S.NoMap ? null : CardMap(), MapScale = Math.Clamp(S.MapScale, 40, 100) / 100.0,
             Prices = S.PricesShown, Obo = S.Obo, HideOffer = S.HideOffer, Compact = S.CompactTiles, Stats = !S.NoStats,
             Total = total, TotalNote = totalNote, Credit = credit, PriceScale = priceScale,

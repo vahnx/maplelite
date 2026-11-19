@@ -24,6 +24,8 @@ public sealed class Session
     public Dictionary<string, bool> GroupChoices { get; set; } = new();
     public string Title { get; set; } = ""; public string Seller { get; set; } = ""; public string Channel { get; set; } = "";
     public string Location { get; set; } = ""; public string? AutoLocation { get; set; } public string? AutoIgn { get; set; }
+    /// <summary>The minimap was last seen at its middle size, which hides the map's name: the card leaves the location off too.</summary>
+    public bool MapNameHidden { get; set; }
     public string Search { get; set; } = ""; public string Show { get; set; } = ""; public string Tab { get; set; } = "";
     public string Server { get; set; } = "Windia";
     public bool HidePrices { get; set; } public bool Obo { get; set; } public bool SplitStacks { get; set; } public bool NoTotal { get; set; }

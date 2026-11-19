@@ -49,6 +49,8 @@ internal sealed class SaleCardPanel : UserControl
 
     // Card Design controls that the monitor can change (IGN, channel, location).
     readonly TextBox _seller = new(), _channel = new(), _server = new(), _tagline = new(), _location = new(), _title = new(), _discord = new() { Watermark = "your Discord name" };
+    // shown while the minimap hides the map's name, which leaves the location off the card
+    readonly TextBlock _locationNote = Muted("Left off the card: your minimap is at its middle size, which hides the map's name. Show the name in the game to put it back.");
 
     public SaleCardPanel(SaleCardEngine engine, IPluginContext ctx)
     {
@@ -713,7 +715,7 @@ internal sealed class SaleCardPanel : UserControl
 
         return Card(Stack(6,
             Head("Seller"), Two(seller, server),
-            Muted("Location"), Field(_location, v => S.Location = v),
+            Muted("Location"), Field(_location, v => S.Location = v), _locationNote,
             Muted("Card title"), Field(_title, v => S.Title = v),
             Wrap(manual, portrait),
             Head("Look"), look,
@@ -879,6 +881,7 @@ internal sealed class SaleCardPanel : UserControl
         {
             void Sync(TextBox box, string value) { if (!box.IsFocused && box.Text != value) box.Text = value; }
             Sync(_seller, S.Seller); Sync(_channel, S.Channel); Sync(_location, S.Location);
+            _locationNote.IsVisible = S.MapNameHidden;
             foreach (var (box, get) in _checks) if (box.IsChecked != get()) box.IsChecked = get();
         }
         finally { _loading = false; }
