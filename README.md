@@ -240,7 +240,10 @@ stat, a value and "or more" / "exactly" / "or less" and press Add (or type your 
 used)"), and for equipment the fewest upgrade slots you'd take. The card lists them under "Wants:". On both lists, the going rate shows as small buttons under the item (one per
 source, plus **Average** when there are several); click one to put that figure in the price box. The **Prices** slider above the card raises
 or lowers every price on the card, and the total, from 1% to 200% of your list (click the percentage to go back to 100%);
-the list keeps its own prices. The **Selling** and **Buying** switches at the top put
+the list keeps its own prices. Each item on **Selling** has its own **Price %** slider, and **Kinds of item on the card**
+has one per kind (Weapons, Armor, Gems & ores…); they apply on top of the card's slider. On the card, stacks of the same
+item merge into one tile with the total, and tiles are grouped by kind under a divider showing that kind's total (both
+switchable in Design). The **Selling** and **Buying** switches at the top put
 each whole group on the card or take it off; items you are buying are not counted in the total.
 
 Open your own Free Market shop in the game, then select **My FM shop** in Selling to make a card from
@@ -259,6 +262,8 @@ is remembered.
 
 Snapshots, instant replay and recordings of the game, plus an editor for looks and overlays. Everything comes from the
 shared capture loop (the game window's own picture), so MapleLite's overlay is never in a capture unless you switch it on.
+
+![Camera: snapshot and recording buttons, the gallery of captures, and the hotkey and instant replay settings](docs/screenshots/camera.png)
 
 - **Snapshot** (Ctrl+Alt+S): a lossless PNG of the game.
 - **Instant replay** (Ctrl+Alt+R, off by default: turn it on in the Camera page): saves the last 15 s (5–120, set in the page). While on it works continuously (with ffmpeg about a third of a CPU core and ~6 GB an hour of disk writes). With ffmpeg it's encoded as it
