@@ -174,7 +174,7 @@ internal static class Frames
         using var path = new SKPath();
         path.MoveTo(half[0].X, half[0].Y);
         foreach (var p in half.Skip(1)) path.LineTo(p.X, p.Y);
-        foreach (var p in half.Reverse().Skip(1)) path.LineTo(-p.X, p.Y);
+        foreach (var p in Enumerable.Reverse(half).Skip(1)) path.LineTo(-p.X, p.Y);
         path.Close();
         using var stem = new SKPath();
         stem.MoveTo(0, 0.45f); stem.LineTo(0, 1f);
