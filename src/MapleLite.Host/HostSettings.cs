@@ -12,6 +12,7 @@ internal sealed class HostSettings
     /// <summary>Pictures a second the capture loop takes while plugins are listening (5–60).</summary>
     public double CaptureFps { get; set; } = MapleLite.Core.Capture.CaptureLoop.DefaultFps;
     public List<string> DisabledPlugins { get; set; } = new();
+    public bool ShowMarketDatabase { get; set; }
     /// <summary>Overlays are off by default and not built yet. See docs/OVERLAYS.md.</summary>
     public bool OverlayEnabled { get; set; }
 

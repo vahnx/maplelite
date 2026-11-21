@@ -80,7 +80,7 @@ internal sealed class SettingsPage : UserControl
         _shell.Notify(await _shell.Plugins.RemoveAsync(p));
     }
 
-    public SettingsPage(Shell shell)
+    public SettingsPage(Shell shell, Action refreshNav)
     {
         _shell = shell;
         _themes.SelectionChanged += (_, _) =>
@@ -127,8 +127,27 @@ internal sealed class SettingsPage : UserControl
         var captureCard = Ui.Card(Ui.Stack(10,
             Ui.Subheading("Capture rate"),
             Ui.Row(12, rates, Ui.Muted("Applies right away. The Game page shows the rate actually reached.")),
-            Ui.Muted("How often MapleLite takes a picture of the game while plugins are listening. Higher catches short-lived text " +
-                     "(pickup notices) sooner but uses more CPU. It can't go above the game's own frame rate.")));
+            Ui.Muted("Maximum capture rate. MapleLite uses the highest rate requested by active plugins, up to this limit. " +
+                     "Higher limits help readers catch short-lived text but use more CPU. Actual capture also depends on the game.")));
+
+        var marketToggle = new ToggleSwitch { Content = "Show Market database", IsChecked = shell.Settings.ShowMarketDatabase };
+        marketToggle.IsCheckedChanged += (_, _) =>
+        {
+            bool show = marketToggle.IsChecked == true;
+            if (show == shell.Settings.ShowMarketDatabase) return;
+            shell.Settings.ShowMarketDatabase = show;
+            try { shell.Settings.Save(); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                shell.Settings.ShowMarketDatabase = !show;
+                marketToggle.IsChecked = !show;
+                shell.Notify("Couldn't save the Market database setting.");
+                return;
+            }
+            refreshNav();
+        };
+        var sidebarCard = Ui.Card(Ui.Stack(8, Ui.Subheading("Sidebar"), marketToggle,
+            Ui.Muted("Market price archiving continues in the background.")));
 
         var overlayToggle = new ToggleSwitch { IsChecked = shell.Settings.OverlayEnabled, IsEnabled = OperatingSystem.IsWindows(), OnContent = "On", OffContent = "Off" };
         overlayToggle.IsCheckedChanged += (_, _) => { shell.Settings.OverlayEnabled = overlayToggle.IsChecked == true; shell.Settings.Save(); };
@@ -151,7 +170,7 @@ internal sealed class SettingsPage : UserControl
         FillPlugins();
         _shell.Plugins.Changed += () => Avalonia.Threading.Dispatcher.UIThread.Post(FillPlugins);
 
-        Content = Ui.Page(Ui.Stack(18, Ui.Heading("Settings"), pluginCard, captureCard, themeCard, overlayCard,
+        Content = Ui.Page(Ui.Stack(18, Ui.Heading("Settings"), sidebarCard, pluginCard, captureCard, themeCard, overlayCard,
             Ui.Muted($"MapleLite {AppVersion} · {_shell.Platform.Name} · plugin API {MapleLite.Sdk.SdkInfo.ApiVersion}")));
     }
 

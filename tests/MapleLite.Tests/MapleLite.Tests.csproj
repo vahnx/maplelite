@@ -17,4 +17,7 @@
     <ProjectReference Include="..\..\plugins\MapleLite.Plugins.SpawnTimer\MapleLite.Plugins.SpawnTimer.csproj" />
     <ProjectReference Include="..\..\plugins\MapleLite.Plugins.Camera\MapleLite.Plugins.Camera.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\plugins\MapleLite.Plugins.SaleCard\MapleLite.Plugins.SaleCard.csproj" />
+  </ItemGroup>
 </Project>

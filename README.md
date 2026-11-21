@@ -228,26 +228,46 @@ by map and time (saved one file per day in `plugins/xptracker/gains/`).
 
 ![XP Tracker: EXP per hour, kills, level progress and time to the next level](docs/screenshots/xp-tracker.png)
 
+Open **XP Tracker → Party Quests** to see total PQ EXP, totals by quest, and the breakdown for each run.
+Select a quest or type its name and click **Start run** before entering. Click **End run** after the final EXP
+award appears. Use **Classify reward EXP** on a run to label recorded gains as stage rewards or completion rewards.
+Detected rewards without a label appear under **Unclassified rewards**. Earlier EXP remains available in **History**.
+
 ## Shop Card
 
-![Shop Card: your items with going rates on the left, the shareable card on the right](docs/screenshots/shop-card.png)
+![Shop Card: available items and selected items, with the preview below](docs/screenshots/shop-card-builder.png)
 
-Use **Selling**, **Buying**, **Design** and **Settings** to switch pages while keeping the card preview visible.
-**Selling** lists what MapleLite read from your inventory, storage and own shop (tagged SALE on the card), with the
-**Kinds of item on the card** group controls. **Buying** searches every item in the game: tick what you want and it
-goes on the card tagged BUYING, with your quantity and price. The ▾ button on a Buying row says what you want: pick a
-stat, a value and "or more" / "exactly" / "or less" and press Add (or type your own lines, like "Clean (no scrolls
-used)"), and for equipment the fewest upgrade slots you'd take. The card lists them under "Wants:". On both lists, the going rate shows as small buttons under the item (one per
-source, plus **Average** when there are several); click one to put that figure in the price box. The **Prices** slider above the card raises
-or lowers every price on the card, and the total, from 1% to 200% of your list (click the percentage to go back to 100%);
-the list keeps its own prices. Each item on **Selling** has its own **Price %** slider, and **Kinds of item on the card**
-has one per kind (Weapons, Armor, Gems & ores…); they apply on top of the card's slider. On the card, stacks of the same
-item merge into one tile with the total, and tiles are grouped by kind under a divider showing that kind's total (both
-switchable in Design). The **Selling** and **Buying** switches at the top put
-each whole group on the card or take it off; items you are buying are not counted in the total.
+Use **Selling**, **Buying**, **Design** and **Settings** to switch pages. The card preview sits below the editor;
+**Maximize** opens a larger view. At narrow window widths the two item lists stack vertically.
 
-Open your own Free Market shop in the game, then select **My FM shop** in Selling to make a card from
-its recognized listings. The reader checks for the owner's **Close Store** control; browsing another
+**Selling** separates **Available items** from **On your card**. Use **Sync inventory** to refresh visible inventory,
+storage or your own shop. Open each tab or scroll the game window to expose more items. Explicit **Sync inventory** adds recognized items visible in that scan directly to your card. Background scans
+leave newly discovered items in Available items until you press **+ Add** or Sync. Search and the source/type filters only affect the available list;
+they never hide or remove your selected items. The **−** button returns an item to Available items without deleting it.
+Sync keeps manual and unseen items and existing prices; it reselects recognized visible items even if you previously removed them.
+Separate equipment copies are preserved by inventory slot, including copies with identical or unread stats.
+
+**+ Add item** searches the bundled database by words in any order, or lets you add an unlisted name without an icon.
+Manual entries go straight onto your card. Expand a selected row with **▾** for **Change item…**, stats, going-rate
+buttons and price adjustments; manual entries also have **Remove from list**. Inventory corrections are remembered
+by icon, except look-alike scrolls, which are remembered for their inventory slot. Shop corrections stay attached
+to their original listing; storage scroll corrections become manual entries. Check scroll identities after rearranging slots.
+
+**Missing stats → Review items** above On your card filters to selected equipment/scrolls with incomplete details.
+Use **Read stats (5s)** and hover that exact item in-game, keeping its tooltip visible. Inventory row/slot labels help
+distinguish identical copies. Manual items offer **Enter stats**. Missing stats do not prevent an item from appearing on the card.
+
+**Buying** uses the same two-list workflow. Search or filter the **Item database**, press **+ Add**, then set the wanted
+quantity and offer price on the right. Expand **▾** to add required stats, comparisons (or more / exactly / or less),
+and remaining upgrade slots. These requirements appear under “Wants:” on the exported card. Buying is a wish list,
+so it has no inventory sync. Removing a Buying entry removes it from the wish list; adding it again starts a new entry.
+
+The **Prices** slider above the preview adjusts the card's prices without changing your entered prices. Each selling
+item's **▾** panel has its own adjustment, and **Design → Price adjustments by item type** retains the category controls.
+The **Selling** and **Buying** switches beside the export actions show or hide each list on the exported card.
+
+Open your own Free Market shop in the game, then **Sync inventory** and choose **My FM shop** in the source filter.
+Press **+ Add** on the recognized listings you want to include. The reader checks for the owner's **Close Store** control; browsing another
 player's shop contributes market prices, not your sale items. Scroll the shop list to expose more rows.
 Unclear names or prices are skipped. Repeated reads do not add the same observed listing again.
 
@@ -340,3 +360,9 @@ Thank you for your support!
 
 This is an unofficial fan project. It is not affiliated with, endorsed by or sponsored by Nexon. MapleStory and its
 artwork are trademarks and property of Nexon. Use it in line with the game's terms of service.
+
+### Shop Card UI checks
+
+`dotnet test tests/MapleLite.UiTests/MapleLite.UiTests.csproj` runs the real Avalonia controls with a headless renderer,
+including Selling/Buying add/remove, search, filters, quantity/price editing, wanted stats, missing-capture sync and
+narrow layout. Set `MAPLELITE_UI_SCREENSHOTS` to a local folder to save rendered screenshots. Tests use isolated temp data.

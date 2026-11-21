@@ -23,16 +23,18 @@ public sealed class SaleCardEngine
     public const string ShopTab = "My FM shop";
     /// <summary>Cards for items you want to buy, picked from the item database on the Buying tab (Key "Buy:{id}").</summary>
     public const string BuyTab = "Buying";
+    /// <summary>Items you're selling that you added by hand from the item database (Key "Added:…"). Scans never touch them.</summary>
+    public const string AddedTab = "Added by hand";
     public const string PlaceBag = "In inventory", PlaceStorage = "In storage", PlaceShop = "In my FM shop";
     public static string PlaceOf(SaleItem item) => item.Tab == ShopTab ? PlaceShop : item.Tab == StorageTab ? PlaceStorage : PlaceBag;
-    public static readonly string[] Orders = { "By type", "By name", "By price (high first)", "As scanned" };
+    public static readonly string[] Orders = { "By type", "By name", "By price (high first)", "As scanned", "Manual" };
     public static readonly string[] SiteModes = { "Usual / typical", "Last sale", "Last 3 avg", "Last 10 median" };
 
     readonly IPluginContext _ctx;
     readonly string _folder;
     public ObservableCollection<SaleItem> Items { get; } = new();
     public Session S { get; private set; } = new();
-    public Vision? Vision { get; private set; }
+    public Vision? Vision { get; internal set; }
     PriceBook _book;
     HoverBook _hover;
     NotForSale _notForSale;
@@ -58,6 +60,29 @@ public sealed class SaleCardEngine
     }
 
     public string DataFolder => _folder;
+
+    /// <summary>Merge imported rows as manual cards; never impersonate a live inventory slot or shop listing.</summary>
+    public int ImportCsv(string csv)
+    {
+        var rows = CardCsv.Parse(csv); // validate everything before modifying the live collection
+        var prepared = rows.Select(s => new SaleItem
+        {
+            Key = s.Key.StartsWith("Added:csv:", StringComparison.Ordinal) ? s.Key : "Added:csv:" +
+                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(s.Key))),
+            ItemId = s.ItemId, Name = s.Name, Qty = s.Qty, Custom = s.Custom, Stats = s.Stats, Slots = s.Slots,
+            Buying = s.Buying, Tab = s.Buying ? BuyTab : AddedTab, Include = s.Include, Picked = true,
+            PricePercent = s.PricePercent, Stacks = s.Stacks, Category = Categories.Of(s.ItemId), Icon = Icon(s.ItemId, null),
+        }).ToList();
+        foreach (var item in prepared)
+        {
+            if (Items.FirstOrDefault(i => i.Key == item.Key) is { } old) Remove(old);
+            Add(item);
+        }
+        SaveSession();
+        Say($"Imported {prepared.Count} CSV items as manual cards. Matching prior CSV imports were updated.");
+        Changed?.Invoke();
+        return prepared.Count;
+    }
 
     void Say(string status) { Status = status; Changed?.Invoke(); }
 
@@ -147,7 +172,7 @@ public sealed class SaleCardEngine
     bool _sessionReady;   // nothing is written until the saved list has been read back
     bool _bulk;
 
-    void LoadSession()
+    internal void LoadSession()
     {
         try
         {
@@ -157,7 +182,7 @@ public sealed class SaleCardEngine
             if (!S.CompactDefaulted) { S.CompactTiles = true; S.CompactDefaulted = true; }
             // checked items first by default; a sort you pick afterwards (even back to the order found) is kept
             if (!S.ListSortDefaulted) { if (S.ListSort.Length == 0) { S.ListSort = "on"; S.ListSortDown = false; } S.ListSortDefaulted = true; }
-            S.ShopSold ??= new(); S.KindPercent ??= new();
+            S.ShopSold ??= new(); S.KindPercent ??= new(); S.Renames ??= new(); S.ShopRenames ??= new(); S.ManualOrder ??= new();
             // Lists saved before this was remembered: what is there came from the game, so keep following it.
             S.AutoLocation ??= S.Location;
             S.AutoIgn ??= S.Seller;
@@ -174,7 +199,7 @@ public sealed class SaleCardEngine
                 {
                     Key = s.Key, ItemId = s.ItemId, Tab = s.Tab, Category = Categories.Of(s.ItemId), Stacks = s.Stacks,
                     Name = s.Name, Qty = s.Qty, Include = s.Include, Custom = s.Custom, Stats = s.Stats, Slots = s.Slots, SlotRow = s.SlotRow, SlotCol = s.SlotCol,
-                    AutoStats = s.AutoStats, AutoSlots = s.AutoSlots, IconPx = iconPx, Buying = s.Buying, PricePercent = s.PricePercent,
+                    AutoStats = s.AutoStats, AutoSlots = s.AutoSlots, IconPx = iconPx, Buying = s.Buying, PricePercent = s.PricePercent, Picked = s.Picked,
                 };
                 if (_notForSale.Has(item.Ident)) continue;
                 item.Icon = Icon(s.ItemId, iconPx);
@@ -192,7 +217,7 @@ public sealed class SaleCardEngine
             // what the saved cards know goes into the memory; cards saved without stats are filled from it
             foreach (var i in Items.Where(i => i.IsEquipment && !i.IsWanted && !string.IsNullOrWhiteSpace(i.Stats))) _hover.Set(i.ItemId, i.Key, i.Stats, i.Slots);
             foreach (var i in Items.ToList()) Recall(i);
-            if (!(S.Tab.Length == 0 || Vision.TabNames.Contains(S.Tab) || S.Tab == StorageTab || S.Tab == ShopTab)) S.Tab = "";
+            if (!(S.Tab.Length == 0 || Vision.TabNames.Contains(S.Tab) || S.Tab == StorageTab || S.Tab == ShopTab || S.Tab == AddedTab)) S.Tab = "";
         }
         catch { Store.Failed(SessionFile); S = new(); /* starting empty, with the unreadable file kept aside */ }
         finally { _bulk = false; }
@@ -212,7 +237,7 @@ public sealed class SaleCardEngine
             {
                 Key = i.Key, ItemId = i.ItemId, Tab = i.Tab, Name = i.Name, Qty = i.Qty, Include = i.Include, Custom = i.Custom,
                 Stats = i.Stats, Slots = i.Slots, SlotRow = i.SlotRow, SlotCol = i.SlotCol, AutoStats = i.AutoStats, AutoSlots = i.AutoSlots, Stacks = i.Stacks,
-                Icon = Session.Base64(i.IconPx), Buying = i.Buying, PricePercent = i.PricePercent,
+                Icon = Session.Base64(i.IconPx), Buying = i.Buying, PricePercent = i.PricePercent, Picked = i.Picked,
             }).ToList();
             Store.Write(SessionFile, JsonSerializer.Serialize(S));
         }
@@ -233,7 +258,7 @@ public sealed class SaleCardEngine
             // (not what you want in an item you are buying: that is a wish, not a reading)
             if (it.IsEquipment && !it.IsWanted && !string.IsNullOrWhiteSpace(it.Stats)) _hover.Set(it.ItemId, it.Key, it.Stats, it.Slots);
         }
-        if (e.PropertyName == nameof(SaleItem.Include) && !_bulk) Changed?.Invoke();
+        if (e.PropertyName is nameof(SaleItem.Include) or nameof(SaleItem.Stats) or nameof(SaleItem.Slots) && !_bulk) Changed?.Invoke();
         if (e.PropertyName is nameof(SaleItem.Icon) or nameof(SaleItem.RateNote)) { }
         CardChanged?.Invoke();
         QueueSave();
@@ -259,7 +284,7 @@ public sealed class SaleCardEngine
         var remove = new HashSet<SaleItem>();
         // Older tooltip corrections left the corrected scroll in an impossible tab, beside the icon guess in Use.
         // Keep the corrected title and the actual Use stack count as one card.
-        foreach (var corrected in Items.Where(i => i.ItemId / 10000 == 204 && i.Tab != "Use" && i.Tab != StorageTab && i.Tab != ShopTab && i.Tab != "Items").ToList())
+        foreach (var corrected in Items.Where(i => i.ItemId / 10000 == 204 && i.Tab != "Use" && i.Tab != StorageTab && i.Tab != ShopTab && i.Tab != "Items" && i.Tab != AddedTab && i.Tab != BuyTab).ToList())
         {
             var guess = Items.FirstOrDefault(i => i.Tab == "Use" && i.ItemId / 10000 == 204 && i.SlotRow == corrected.SlotRow && i.SlotCol == corrected.SlotCol);
             if (guess == null) continue;
@@ -274,8 +299,8 @@ public sealed class SaleCardEngine
         // The same for unrecognised items: the key ends with the slot picture's fingerprint.
         foreach (var group in Items.Where(i => i.ItemId == 0 && i.Key.Contains(":?")).GroupBy(i => i.Key[i.Key.IndexOf(":?")..]))
             if (group.Any(i => i.Tab == "Items") && group.Any(i => i.Tab != "Items")) remove.UnionWith(group.Where(i => i.Tab == "Items"));
-        // Equipment copies are distinct only when their recorded rolls/slots differ.
-        foreach (var group in Items.Where(i => i.IsEquipment && i.Tab != StorageTab && i.Tab != ShopTab && i.Tab != BuyTab).GroupBy(i => (i.ItemId, i.Stats, i.Slots)))
+        // Equipment in different inventory slots is distinct even when stats are identical or unread.
+        foreach (var group in Items.Where(i => i.IsEquipment && i.Tab != StorageTab && i.Tab != ShopTab && i.Tab != BuyTab && i.Tab != AddedTab && i.SlotRow >= 0 && i.SlotCol >= 0).GroupBy(i => (i.ItemId, i.Tab, i.SlotRow, i.SlotCol)))
             if (group.Count() > 1)
             {
                 var keep = group.OrderBy(i => i.Tab == "Equip" ? 0 : i.Tab == "Items" ? 1 : 2).First();
@@ -449,12 +474,15 @@ public sealed class SaleCardEngine
     }
 
     /// <summary>Reads the game again right away (Refresh now): inventory, storage, location and portrait.</summary>
+    HashSet<string>? _syncObserved;
+
     public async Task RefreshNowAsync()
     {
         if (Vision == null || _busy) return;
         var frame = Latest();
         if (frame == null) return;
         _busy = true;
+        _syncObserved = new();
         try
         {
             _gridHash = 0; _storageHash = 0; _lastLay = null; _hoverDone = null;
@@ -462,9 +490,24 @@ public sealed class SaleCardEngine
             var notes = new List<string>();
             if (await MonitorInventory(frame) is { } inv) notes.Add(inv);
             if (await MonitorStorage(frame) is { } sto) notes.Add(sto);
-            Say(notes.Count == 0 ? "Read the game again; no inventory or storage was found." : string.Join(" · ", notes));
+            if (await WatchShop(frame) is { } shop) notes.Add(shop);
+            int included = IncludeSyncedItems(_syncObserved);
+            if (_syncObserved.Count > 0) notes.Add($"Synced {_syncObserved.Count} visible items to your card ({included} added). Hover equipment to read any missing stats");
+            Say(notes.Count == 0 ? "No visible inventory, storage or shop was found. Open one in game and sync again." : string.Join(" · ", notes));
         }
-        finally { _busy = false; }
+        finally { _syncObserved = null; _busy = false; }
+    }
+
+    /// <summary>Explicit sync adds recognized visible items to the card; unseen and manual items retain their choices.</summary>
+    internal int IncludeSyncedItems(IEnumerable<string> keys)
+    {
+        var seen = keys.ToHashSet(StringComparer.Ordinal);
+        var items = Items.Where(i => seen.Contains(i.Key) && i.ItemId != 0 && !i.IsWanted && !i.IsAdded).ToList();
+        int added = items.Count(i => !i.Include);
+        foreach (var item in items) item.Include = true;
+        if (items.Count > 0) S.HideSelling = false;
+        SaveSession(); Changed?.Invoke(); CardChanged?.Invoke();
+        return added;
     }
 
     /// <summary>Manual read: IGN, location, channel and portrait, replacing what is in the boxes.</summary>
@@ -529,7 +572,7 @@ public sealed class SaleCardEngine
         int col = (cursor!.Value.x - lay.GridX) / Vision.PitchX, row = (cursor.Value.y - lay.GridY) / Vision.PitchY;
         var catalog = vision.Catalog.Values;
         // A scroll: its tooltip says which one it is. Kept for this slot; the list updates once the mouse moves off.
-        if (_slotSeen.TryGetValue((tab, row, col), out var seenHere) && seenHere.id / 10000 == 204)
+        if (_slotSeen.TryGetValue((tab, row, col), out var seenHere) && seenHere.id / 10000 == 204 && !PickedAt(tab, row, col))
         {
             if (await ItemTooltipReader.ReadAsync(_ctx.Ocr, frame, cursor, catalog) is { } scroll && MayRename(seenHere.id, scroll, tab))
             {
@@ -586,7 +629,7 @@ public sealed class SaleCardEngine
             Changed?.Invoke();
         }
         if (await ItemTooltipReader.ReadAsync(_ctx.Ocr, frame, cursor, catalog) is { } hovered &&
-            cards.FirstOrDefault(c => c.Name != hovered.name && MayRename(c.ItemId, hovered, tab)) is { } corrected)
+            cards.FirstOrDefault(c => !c.Picked && c.Name != hovered.name && MayRename(c.ItemId, hovered, tab)) is { } corrected)
         {
             corrected.ItemId = hovered.id;
             corrected.Name = hovered.name;
@@ -806,6 +849,10 @@ public sealed class SaleCardEngine
         var vision = Vision!;
         bool storage = tab == StorageTab;
         var slots = await Task.Run(() => vision.ReadSlots(frame, lay));
+        // Items you corrected by hand: the scanner's reading becomes the item you picked, every time.
+        if (S.Renames.Count > 0)
+            foreach (var s in slots)
+                if (S.Renames.TryGetValue(s.ItemId != 0 ? "id:" + s.ItemId : "pic:" + SlotHash(s), out int to)) s.ItemId = to;
         // The lit tab is sometimes misread (Etc taken for Cash): the items themselves say which tab this is.
         if (!storage && TabFromItems(slots, tab) is { } real) tab = real;
         if (!storage && lay.Tab >= 0)
@@ -818,7 +865,8 @@ public sealed class SaleCardEngine
         // Scroll icons are shared by different upgrades. An icon-only refresh cannot overturn a title already recorded for this slot.
         if (!storage && tab == "Use")
             foreach (var slot in slots.Where(s => s.ItemId / 10000 == 204))
-                if (Items.FirstOrDefault(i => i.Tab == "Use" && i.ItemId / 10000 == 204 && i.SlotRow == slot.Row && i.SlotCol == slot.Col) is { } recorded)
+                if ((Items.FirstOrDefault(i => i.Tab == "Use" && i.Picked && i.SlotRow == slot.Row && i.SlotCol == slot.Col)
+                     ?? Items.FirstOrDefault(i => i.Tab == "Use" && i.ItemId / 10000 == 204 && i.SlotRow == slot.Row && i.SlotCol == slot.Col)) is { } recorded)
                     slot.ItemId = recorded.ItemId;
         var cursorNow = Cursor();
         // Slot pictures are only trusted when the pointer is away from the grid (it is drawn over the slot it covers).
@@ -830,7 +878,7 @@ public sealed class SaleCardEngine
                 if (_slotTitle.TryGetValue(k, out var t))
                 {
                     if (t.hash != h) _slotTitle.Remove(k);              // something else is in this slot now
-                    else if (slot.ItemId / 10000 == 204) slot.ItemId = t.id;
+                    else if (slot.ItemId / 10000 == 204 && !PickedAt(tab, slot.Row, slot.Col)) slot.ItemId = t.id;
                 }
                 _slotSeen[k] = (h, slot.ItemId);
             }
@@ -841,7 +889,7 @@ public sealed class SaleCardEngine
         {
             var cursor = cursorNow!.Value;
             int row = (cursor.y - lay.GridY) / Vision.PitchY, col = (cursor.x - lay.GridX) / Vision.PitchX;
-            if (slots.FirstOrDefault(s => s.Row == row && s.Col == col) is { } slot && MayRename(slot.ItemId, hovered, tab))
+            if (slots.FirstOrDefault(s => s.Row == row && s.Col == col) is { } slot && MayRename(slot.ItemId, hovered, tab) && !PickedAt(tab, row, col))
             {
                 hoveredCorrection = hovered; hoveredRow = row; hoveredCol = col;
                 slot.ItemId = hovered.id;
@@ -913,6 +961,7 @@ public sealed class SaleCardEngine
                 foreach (var stale in Items.Where(i => i.Tab == "Items" && i.ItemId == s.ItemId &&
                     ((i.SlotRow == s.Row && i.SlotCol == s.Col) || i.Qty == (s.Quantity > 0 ? s.Quantity.ToString() : ""))).ToList())
                     Carry(stale);
+            if (s.ItemId != 0) _syncObserved?.Add(key);
             var existing = Items.FirstOrDefault(i => i.Key == key);
             if (existing != null)
             {
@@ -944,7 +993,7 @@ public sealed class SaleCardEngine
             // that already has a card there.
             if (storage && s.ItemId != 0 && !Equip(s) && !s.HasCount && Items.Any(i => i.Tab == StorageTab && i.ItemId == s.ItemId && i.Key != key)) continue;
 
-            var item = new SaleItem { Key = key, ItemId = s.ItemId, Tab = tab, Category = Categories.Of(s.ItemId), Stacks = stacks, SlotRow = s.Row, SlotCol = s.Col };
+            var item = new SaleItem { Key = key, ItemId = s.ItemId, Tab = tab, Category = Categories.Of(s.ItemId), Stacks = stacks, SlotRow = s.Row, SlotCol = s.Col, Include = false };
             var prior = priorCards.FirstOrDefault(i => !priorUsed.Contains(i) && i.ItemId == s.ItemId && i.SlotRow == s.Row && i.SlotCol == s.Col)
                 ?? priorCards.FirstOrDefault(i => !priorUsed.Contains(i) && i.ItemId == s.ItemId && !i.IsEquipment && !item.IsEquipment)
                 // a listing back from your shop: any copy of the item takes it over (equipment too, as it has no slot yet)
@@ -954,7 +1003,7 @@ public sealed class SaleCardEngine
                 priorUsed.Add(prior);
                 carryState = true;
                 carryInclude = prior.Include; carryCustom = prior.Custom; carryStats = prior.Stats; carrySlots = prior.Slots; carryPercent = prior.PricePercent;
-                item.AutoStats = prior.AutoStats; item.AutoSlots = prior.AutoSlots;
+                item.AutoStats = prior.AutoStats; item.AutoSlots = prior.AutoSlots; item.Picked = prior.Picked;
                 // the card back from the shop has found its slot: this card replaces it
                 if (prior.Key.StartsWith(ReturnedPrefix, StringComparison.Ordinal)) Remove(prior);
                 // The same item in the same slot with a new count (you picked up more ore): the old card is replaced,
@@ -990,11 +1039,6 @@ public sealed class SaleCardEngine
                 item.IconPx = s.Pixels;
                 item.Icon = Icon(0, s.Pixels);
                 item.Include = false; // uncertain identity; this does not establish tradeability
-            }
-            if (!carryState && s.ItemId != 0)
-            {
-                if (S.GroupChoices.TryGetValue(item.Tab == StorageTab ? PlaceStorage : PlaceBag, out bool placeChoice)) item.Include = placeChoice;
-                if (S.GroupChoices.TryGetValue(item.Category, out bool categoryChoice)) item.Include = categoryChoice;
             }
             Add(item);
             fresh.Add(item);
@@ -1319,9 +1363,9 @@ public sealed class SaleCardEngine
             // card keys are "My FM shop:SELLER:item:bundle:price:copy"
             var cards = Items.Where(i => i.Tab == ShopTab && i.Key.Split(':') is { Length: 6 } k && k[1] == seller
                     && k[3] == sold.Bundle.ToString() && k[4] == sold.Price.ToString()
-                    && (sold.ItemIds.Contains(i.ItemId) || (sold.ItemIds.Count == 0 && NameStarts(i.Name, sold.Name))))
+                    && (sold.ItemIds.Contains(i.ItemId) || sold.ItemIds.Contains(ListingId(i)) || (sold.ItemIds.Count == 0 && NameStarts(i.Name, sold.Name))))
                 .OrderByDescending(i => i.Key, StringComparer.Ordinal).ToList();
-            int id = cards.Select(c => c.ItemId).Distinct().Count() == 1 ? cards[0].ItemId : sold.ItemIds.Count == 1 ? sold.ItemIds[0] : 0;
+            int id = cards.Select(ListingId).Distinct().Count() == 1 ? ListingId(cards[0]) : sold.ItemIds.Count == 1 ? sold.ItemIds[0] : 0;
             if (id == 0) continue;   // can't tell which item sold: leave the cards alone
             var identity = $"{seller}:{id}:{sold.Bundle}:{sold.Price}";
             int nth = counts[identity] = counts.GetValueOrDefault(identity) + 1;
@@ -1329,10 +1373,12 @@ public sealed class SaleCardEngine
             if (S.ShopSold.Contains(mark)) continue;
             S.ShopSold.Add(mark);
             changed = true;
-            if (cards.FirstOrDefault(c => c.ItemId == id) is { } gone) Remove(gone);
+            if (cards.FirstOrDefault(c => ListingId(c) == id) is { } gone) Remove(gone);
         }
         if (changed) { SaveSession(); Changed?.Invoke(); CardChanged?.Invoke(); }
     }
+
+    static int ListingId(SaleItem item) => int.TryParse(item.Key.Split(':').ElementAtOrDefault(2), out int id) ? id : item.ItemId;
 
     static bool NameStarts(string full, string shown)
     {
@@ -1371,16 +1417,17 @@ public sealed class SaleCardEngine
             int copy = occurrences.GetValueOrDefault(identity);
             occurrences[identity] = copy + 1;
             var key = $"{ShopTab}:{identity}:{copy}";
+            _syncObserved?.Add(key);
             // a listing moved back to the inventory when the shop looked closed, seen in the open shop again: it's a listing again
             if (Items.FirstOrDefault(i => i.Key == ReturnedPrefix + key) is { } back) { back.Key = key; back.Tab = ShopTab; back.SlotRow = back.SlotCol = -1; added++; continue; }
             if (Items.Any(i => i.Key == key)) continue;
-            var item = new SaleItem { Key = key, ItemId = row.ItemId, Tab = ShopTab,
-                Name = cat.name, Category = Categories.Of(row.ItemId), Icon = Icon(row.ItemId, null),
+            bool picked = S.ShopRenames.TryGetValue(key, out int correctedId) && Vision.Catalog.ContainsKey(correctedId);
+            if (picked) cat = Vision.Catalog[correctedId];
+            var item = new SaleItem { Key = key, ItemId = cat.id, Tab = ShopTab, Picked = picked, Include = false,
+                Name = cat.name, Category = Categories.Of(cat.id), Icon = Icon(cat.id, null),
                 Url = ItemLinks.Kerning(cat), Qty = row.Bundle > 1 ? row.Bundle.ToString() : "",
                 Custom = SoldBySet(row.ItemId) ? row.Price.ToString() : row.Price % row.Bundle == 0
                     ? (row.Price / row.Bundle).ToString() : $"{row.Price:N0} per {row.Bundle}" };
-            if (S.GroupChoices.TryGetValue(PlaceShop, out bool place)) item.Include = place;
-            if (S.GroupChoices.TryGetValue(item.Category, out bool kind)) item.Include = kind;
             ApplyRate(item);
             Add(item);
             added++;
@@ -1477,7 +1524,7 @@ public sealed class SaleCardEngine
     /// <summary>All ("") shows everything, Storage what was read from storage, the inventory tabs go by the item's type.</summary>
     /// <remarks>Buying cards belong only to the Buying list, never to a Selling tab (All included).</remarks>
     public static bool InTab(SaleItem it, string tab) => it.Tab == BuyTab ? tab == BuyTab
-        : tab.Length == 0 || (tab == StorageTab || tab == ShopTab ? it.Tab == tab : TabOf(it) == tab);
+        : tab.Length == 0 || (tab == StorageTab || tab == ShopTab || tab == AddedTab ? it.Tab == tab : TabOf(it) == tab);
 
     /// <summary>Throwing stars and bullets are sold by the set (one slot, recharged at a shop), not one by one.</summary>
     static bool SoldBySet(int id) => id / 10000 is 207 or 233;
@@ -1551,6 +1598,7 @@ public sealed class SaleCardEngine
             1 => chosen.OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToList(),
             2 => chosen.OrderByDescending(Price).ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToList(),
             3 => chosen,
+            4 => chosen.OrderBy(i => { int n = S.ManualOrder.IndexOf(i.Key); return n < 0 ? int.MaxValue : n; }).ToList(),
             // the item id keeps a family together inside its kind (the ores, then the jewel ores, then the refined ones)
             _ => chosen.OrderBy(Kind).ThenBy(i => i.ItemId == 0 ? int.MaxValue : i.ItemId).ToList(),
         };
@@ -1562,7 +1610,8 @@ public sealed class SaleCardEngine
     /// </summary>
     public (List<SaleItem> items, CardOptions options) Card()
     {
-        var selling = S.HideSelling ? new List<SaleItem>() : MergeStacks(Items.Where(i => i.Include && i.Tab != BuyTab && InTab(i, S.Tab)).ToList());
+        var selling = S.HideSelling ? new List<SaleItem>() : Items.Where(i => i.Include && i.Tab != BuyTab).ToList();
+        if (S.Order != "Manual") selling = MergeStacks(selling);
         var buying = S.HideBuying ? new List<SaleItem>() : Items.Where(i => i.Include && i.Tab == BuyTab).ToList();
         // What you sell: its kind's adjustment and its own, applied with the card's slider (prices, discount tags, totals).
         foreach (var i in selling) i.CardScale = KindPercent(i.Category) / 100.0 * i.PricePercent / 100.0;
@@ -1604,10 +1653,10 @@ public sealed class SaleCardEngine
             Title = S.Title, Seller = S.Seller, Server = S.Server, Channel = S.Channel, Location = S.MapNameHidden ? "" : S.Location, Tagline = S.Tagline ?? "",
             Avatar = S.NoAvatar ? null : AvatarFor(S.Seller), Map = S.NoMap ? null : CardMap(), MapScale = Math.Clamp(S.MapScale, 40, 100) / 100.0,
             Prices = S.PricesShown, Obo = S.Obo, HideOffer = S.HideOffer, Compact = S.CompactTiles, Stats = !S.NoStats,
-            Total = total, TotalNote = totalNote, PriceScale = priceScale, Groups = !S.NoGroups, KindTotals = kindTotals,
+            Total = total, TotalNote = totalNote, PriceScale = priceScale, Groups = !S.NoGroups && S.Order != "Manual", KindTotals = kindTotals,
             Theme = Math.Max(0, Array.FindIndex(CardRenderer.Themes, t => t.Name == S.Theme)),
             ShowTime = !S.NoTime, Zone = S.LocalTime ? S.Zone : "",
-            ShopMarker = !S.NoShopMarker, Discord = S.Discord ?? "", SellerMarker = !S.NoSellerMarker, Each = !S.NoEach, Pack = !S.NoPack, TradeTags = !S.NoTradeTags,
+            ShopMarker = !S.NoShopMarker, Discord = S.Discord ?? "", SellerMarker = !S.NoSellerMarker, Each = !S.NoEach, Pack = !S.NoPack && S.Order != "Manual", TradeTags = !S.NoTradeTags,
             DiscountTags = !S.NoDiscountTags,
             TagColours = new CardRenderer.TagColours(S.SaleTagColour ?? CardRenderer.TagColours.SaleDefault, S.BuyTagColour ?? CardRenderer.TagColours.BuyDefault,
                 S.ShopTagColour ?? CardRenderer.TagColours.ShopDefault, S.DiscountTagColour ?? CardRenderer.TagColours.DiscountDefault),
@@ -1615,7 +1664,7 @@ public sealed class SaleCardEngine
         };
         // Grouped: the kinds in their usual order, the chosen order kept inside each (OrderBy keeps ties in place).
         var sold = InOrder(selling);
-        if (!S.NoGroups) sold = sold.OrderBy(i => KindRank(i.Category)).ToList();
+        if (!S.NoGroups && S.Order != "Manual") sold = sold.OrderBy(i => KindRank(i.Category)).ToList();
         return (sold.Concat(InOrder(buying)).ToList(), options);
     }
 
@@ -1681,6 +1730,107 @@ public sealed class SaleCardEngine
         }
     }
 
+    // ---------------------------------------------------------------- items added or corrected by hand
+
+    /// <summary>Whether the card in this inventory slot holds an item you picked yourself (tooltips leave it alone).</summary>
+    bool PickedAt(string tab, int row, int col) => Items.Any(i => i.Picked && i.Tab == tab && i.SlotRow == row && i.SlotCol == col);
+
+    /// <summary>
+    /// Adds an item you're selling by hand: one from the item database, or (cat null) one by name alone for an item the
+    /// database doesn't have. It stays until you remove it: scans never touch it.
+    /// </summary>
+    public SaleItem AddByHand(CatalogItem? cat, string? name = null)
+    {
+        var item = new SaleItem { Key = "Added:" + Guid.NewGuid().ToString("N")[..12], Tab = AddedTab, Include = true, Picked = true };
+        if (cat != null)
+        {
+            item.ItemId = cat.id; item.Name = cat.name; item.Category = Categories.Of(cat.id);
+            item.Url = ItemLinks.Kerning(cat); item.Icon = Icon(cat.id, null);
+            if (!item.IsEquipment) item.Custom = _book.Get(cat.id) ?? "";
+        }
+        else item.Name = (name ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(item.Name)) throw new ArgumentException("Enter an item name.", nameof(name));
+        ApplyRate(item);
+        Add(item);
+        Say($"Added {item.Name} by hand.");
+        SaveSession();
+        Changed?.Invoke();
+        return item;
+    }
+
+    /// <summary>Takes a card you added by hand off the list. Scanned cards come back on the next scan, so they are only unticked.</summary>
+    public void RemoveAdded(SaleItem item)
+    {
+        if (!item.IsAdded) return;
+        Remove(item);
+        Say($"Removed {item.Name}.");
+        SaveSession();
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Makes a card the item you picked from the database, for when a scan named it wrongly. The fix sticks: inventory
+    /// scrolls (which share icons) keep it for their slot, and anything else is renamed whenever the scanner reads that
+    /// icon again. Shop corrections keep their listing identity; storage scroll corrections become cards added by
+    /// hand.
+    /// </summary>
+    public void ChangeItem(SaleItem card, CatalogItem cat)
+    {
+        if (card.IsWanted || card.ItemId == cat.id) return;
+        int old = card.ItemId;
+        string oldIdent = card.Ident;
+        bool scroll = old / 10000 == 204;
+        bool inventory = Array.IndexOf(Vision.TabNames, card.Tab) >= 0 || card.Tab == "Items";
+        bool movedToAdded = false;
+        if (card.IsAdded) { }
+        else if (card.InShop)
+        {
+            // Keep the listing identity used by rescans and sold-listing detection.
+            S.ShopRenames[card.Key] = cat.id;
+        }
+        else if (inventory && card.SlotRow >= 0 && (scroll || card.Tab == "Use" && cat.id / 10000 == 204))
+        {
+            // per slot: the scan gives this slot the card's item (see ScanGrid); the key follows so the card is found again
+            card.Key = old != 0 ? System.Text.RegularExpressions.Regex.Replace(card.Key, $@"(?<=:){old}(?=:|$)", cat.id.ToString())
+                : $"{card.Tab}:{cat.id}:{card.Stacks}:{Leading(card.Qty)}";
+        }
+        else if (!scroll && oldIdent.Length > 0)
+        {
+            S.Renames[oldIdent] = cat.id;
+            foreach (var k in S.Renames.Where(r => r.Value == old && old != 0).Select(r => r.Key).ToList()) S.Renames[k] = cat.id;
+            foreach (var k in S.Renames.Where(r => r.Key == "id:" + r.Value).Select(r => r.Key).ToList()) S.Renames.Remove(k);
+            if (old != 0) card.Key = System.Text.RegularExpressions.Regex.Replace(card.Key, $@"(?<=:){old}(?=:|$)", cat.id.ToString());
+            else if (card.Key.Contains(":?"))
+                card.Key = card.IsEquipment || cat.id / 1000000 == 1
+                    ? card.Tab == StorageTab ? $"{StorageTab}:E:{cat.id}:0" : $"Equip:{card.SlotRow}:{card.SlotCol}:{cat.id}"
+                    : card.Tab == StorageTab ? $"{StorageTab}:{cat.id}:{Leading(card.Qty)}" : $"{card.Tab}:{cat.id}:{card.Stacks}:{Leading(card.Qty)}";
+        }
+        else
+        {
+            // can't be told apart on the next scan: keep the corrected card as one added by hand
+            card.Tab = AddedTab; movedToAdded = true;
+            card.Key = "Added:" + Guid.NewGuid().ToString("N")[..12];
+        }
+        card.Picked = true;
+        card.ItemId = cat.id;
+        card.Name = cat.name;
+        card.Category = Categories.Of(cat.id);
+        card.Url = ItemLinks.Kerning(cat);
+        card.Icon = Icon(cat.id, null) ?? card.Icon;
+        card.IconPx = null;
+        if (old == 0) card.Include = true;
+        if (string.IsNullOrWhiteSpace(card.Custom) && !card.IsEquipment) card.Custom = _book.Get(cat.id) ?? "";
+        ApplyRate(card);
+        _gridHash = 0; _storageHash = 0;   // read again with the correction
+        Say(movedToAdded
+            ? $"Changed to {cat.name}, kept under Added by hand. If the scan brings back the wrong copy, untick it."
+            : $"Changed to {cat.name}.");
+        SaveSession();
+        Changed?.Invoke();
+
+        static long Leading(string qty) => System.Text.RegularExpressions.Regex.Match(qty ?? "", @"^\s*(\d+)") is { Success: true } m ? long.Parse(m.Groups[1].Value) : 0;
+    }
+
     /// <summary>Reminder when the card went out without a channel or location.</summary>
     public string MissingNote()
     {
@@ -1707,6 +1857,22 @@ public sealed class SaleCardEngine
     {
         S.GroupChoices[group] = include;
         SetIncluded(members, include);
+    }
+
+    // Use the actual editable entries, not detached merged tiles. Selling always precedes Buying.
+    public List<SaleItem> EditableCardItems() => InOrder(Items.Where(i => i.Include &&
+        (i.IsWanted ? !S.HideBuying : !S.HideSelling)).ToList()).OrderBy(i => i.IsWanted).ToList();
+
+    public void MoveCardItem(SaleItem item, int direction)
+    {
+        if (direction != -1 && direction != 1) return;
+        var entries = EditableCardItems();
+        int from = entries.IndexOf(item), to = from + direction;
+        if (from < 0 || to < 0 || to >= entries.Count || entries[from].IsWanted != entries[to].IsWanted) return;
+        (entries[from], entries[to]) = (entries[to], entries[from]);
+        S.ManualOrder = entries.Select(i => i.Key).Concat(S.ManualOrder.Where(k => entries.All(i => i.Key != k))).Distinct().ToList();
+        S.Order = "Manual";
+        SettingsChanged(); Changed?.Invoke();
     }
 
     public void Clear()

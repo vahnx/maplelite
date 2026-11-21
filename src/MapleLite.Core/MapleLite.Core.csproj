@@ -8,4 +8,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="MapleLite.Tests" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.22" />
+  </ItemGroup>
 </Project>

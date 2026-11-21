@@ -8,7 +8,7 @@ namespace MapleLite.Plugins.ChatHistory;
 /// notices) from the host's game frames with the host's shared OCR, and keeps a searchable local log.
 /// Existing MapleMemory app history is imported (copied) on first start; the app's files are left alone.
 /// </summary>
-public sealed class ChatHistoryPlugin : IPlugin
+public sealed class ChatHistoryPlugin : IPlugin, ICompanionPanel
 {
     MemoryEngine? _engine;
 
@@ -33,6 +33,10 @@ public sealed class ChatHistoryPlugin : IPlugin
     {
         if (_engine != null) await _engine.StopAsync();
     }
+
+    public Control CreateCompanionPanel() => CompanionPanel.Text(() => _engine == null ? "Chat is stopped." :
+        _engine.Status + "\n\n" + string.Join("\n", _engine.Journal.Entries.TakeLast(80).Reverse()
+            .Select(e => $"{e.When} [{e.Channel}] {e.Text}")));
 
     public Control? CreatePanel() => _engine == null ? null : new MemoryPanel(_engine);
 }

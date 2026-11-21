@@ -99,6 +99,8 @@ internal sealed class WindowsCapture : IWindowCapture
 /// </summary>
 internal sealed class WgcSession : IDisposable
 {
+    // GrabAsync is serialized by _gate; reuse the staging buffer instead of allocating megabytes per frame.
+    byte[] _pixels = Array.Empty<byte>();
     readonly nint _handle;
     readonly bool _monitor;
     readonly IDirect3DDevice _device;
@@ -168,9 +170,10 @@ internal sealed class WgcSession : IDisposable
             using (var bitmap = await SoftwareBitmap.CreateCopyFromSurfaceAsync(captured.Surface))
             {
                 var frame = new Frame(bitmap.PixelWidth, bitmap.PixelHeight);
-                var bytes = new byte[frame.Px.Length * 4];
-                bitmap.CopyToBuffer(bytes.AsBuffer());
-                Buffer.BlockCopy(bytes, 0, frame.Px, 0, bytes.Length);
+                int length = frame.Px.Length * 4;
+                if (_pixels.Length != length) _pixels = new byte[length];
+                bitmap.CopyToBuffer(_pixels.AsBuffer());
+                Buffer.BlockCopy(_pixels, 0, frame.Px, 0, length);
                 return frame;
             }
         }

@@ -14,7 +14,7 @@ namespace MapleLite.Plugins.XpTracker;
 /// EXP is read from the status bar with Core's pixel-font reader (<see cref="StatusBarReader"/>), which matches the
 /// game's own digits exactly. Each rise is published as an <see cref="ExpGainedEvent"/> for other plugins.
 /// </summary>
-public sealed class XpTrackerPlugin : IPlugin
+public sealed class XpTrackerPlugin : IPlugin, ICompanionPanel
 {
     const double ReadFps = 5;
     const int HistoryKept = 100;
@@ -29,6 +29,7 @@ public sealed class XpTrackerPlugin : IPlugin
     List<XpSessionRecord> _history = new();
     double? _startPercent;
     XpLog? _log;
+    PqRunLog? _partyQuests;
     MapNames _maps = new();
     string? _lastMapRead;
     DateTimeOffset _lastFlush = DateTimeOffset.MinValue;
@@ -48,6 +49,7 @@ public sealed class XpTrackerPlugin : IPlugin
             SaveCurrent(null);
         }
         _log = new XpLog(context.Storage.Folder);
+        _partyQuests = new PqRunLog(context.Storage);
         // the map names seen before, so today's slightly different read of a map files under the same name
         var log = _log;
         Task.Run(() =>
@@ -221,7 +223,9 @@ public sealed class XpTrackerPlugin : IPlugin
 
     // ---- panel ----
 
-    public Control? CreatePanel()
+    public Control CreateCompanionPanel() => new ScrollViewer { Content = CreatePanel() };
+
+    public Control CreatePanel()
     {
         var status = Muted("Waiting for the game…");
         var rate = Big("–");
@@ -272,18 +276,30 @@ public sealed class XpTrackerPlugin : IPlugin
                 history.Children.Add(Text($"{h.Started.LocalDateTime:MMM d HH:mm} · {Duration(h.Ended - h.Started)} · {h.Gained:N0} EXP · {h.PerHour:N0}/h · {h.Gains:N0} kills · {h.StartPercent:0.00}% → {h.EndPercent:0.00}%"));
         }
 
-        var panel = Stack(14,
-            Card(Stack(10, Title("This session"), rate, status, facts,
-                Wrap(Button("New session", () => { EndSession(); Refresh(); ShowHistory(); }, accent: true)))),
+        var live = Card(Stack(10, Title("This session"), rate, status, facts,
+            Wrap(Button("New session", () => { EndSession(); Refresh(); ShowHistory(); }, accent: true))));
+        var historyPanel = Stack(14,
             Card(Stack(8, Title("Past sessions"), history,
                 Wrap(Button("Export CSV…", () => ExportCsv(history))))),
             BrowseCard());
+        historyPanel.AttachedToVisualTree += (_, _) => ShowHistory();
+        Control partyQuests = _partyQuests is { } pq && _log is { } log
+            ? new PartyQuestPanel(pq, log)
+            : Muted("Waiting for the XP Tracker to start.");
 
         var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         timer.Tick += (_, _) => Refresh();
-        panel.AttachedToVisualTree += (_, _) => { Refresh(); ShowHistory(); timer.Start(); };
-        panel.DetachedFromVisualTree += (_, _) => timer.Stop();
-        return panel;
+        live.AttachedToVisualTree += (_, _) => { Refresh(); timer.Start(); };
+        live.DetachedFromVisualTree += (_, _) => timer.Stop();
+        return new TabControl
+        {
+            ItemsSource = new TabItem[]
+            {
+                new() { Header = "Live", Content = live, FontSize = 16 },
+                new() { Header = "Party Quests", Content = partyQuests, FontSize = 16 },
+                new() { Header = "History", Content = historyPanel, FontSize = 16 },
+            },
+        };
     }
 
     // ---- browsing every gain by map and time ----
@@ -303,7 +319,7 @@ public sealed class XpTrackerPlugin : IPlugin
         var to = new CalendarDatePicker { Width = 140, Watermark = "Any day" };
         var group = new ComboBox { Width = 170, ItemsSource = Groupings.Select(g => g.Name).ToArray(), SelectedIndex = 0 };
         var kind = new ComboBox { Width = 190, ItemsSource = Kinds.Select(k => k.Name).ToArray(), SelectedIndex = 0 };
-        var table = new Grid { ColumnDefinitions = new ColumnDefinitions("*,90,110,100,70,70,80,110"), RowSpacing = 4, ColumnSpacing = 10 };
+        var table = new Grid { MinWidth = 840, ColumnDefinitions = new ColumnDefinitions("*,90,110,100,70,70,80,110"), RowSpacing = 4, ColumnSpacing = 10 };
         var note = Muted("");
         List<XpSummary> shown = new();
         bool filling = false;
@@ -378,7 +394,7 @@ public sealed class XpTrackerPlugin : IPlugin
         var card = Card(Stack(10, Title("Browse EXP"),
             Muted("Every EXP gain, by the map you were on and when. Pick a map and a time span, and how to group them."),
             Wrap(Stack(4, Muted("Map"), map), Stack(4, Muted("When"), range), Stack(4, Muted("From"), from), Stack(4, Muted("To"), to), Stack(4, Muted("Group"), group), Stack(4, Muted("EXP from"), kind)),
-            table, note,
+            new ScrollViewer { Content = table, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto }, note,
             Wrap(Button("Refresh", Show), Button("Export these rows…", () => ExportRows(table, shown)))));
         card.AttachedToVisualTree += (_, _) => Show();
         return card;
@@ -445,5 +461,5 @@ public sealed class XpTrackerPlugin : IPlugin
         catch (IOException e) { _ctx?.Notify("Couldn't export: " + e.Message); }
     }
 
-    static string Duration(TimeSpan t) => t.TotalHours >= 1 ? $"{(int)t.TotalHours}h {t.Minutes:00}m" : t.TotalMinutes >= 1 ? $"{t.Minutes}m {t.Seconds:00}s" : $"{t.Seconds}s";
+    internal static string Duration(TimeSpan t) => t.TotalHours >= 1 ? $"{(int)t.TotalHours}h {t.Minutes:00}m" : t.TotalMinutes >= 1 ? $"{t.Minutes}m {t.Seconds:00}s" : $"{t.Seconds}s";
 }

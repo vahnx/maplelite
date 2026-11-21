@@ -12,6 +12,8 @@ public sealed class SavedItem
     public bool Buying { get; set; }
     /// <summary>This item's own price adjustment on the card, in percent (100 = as listed).</summary>
     public int PricePercent { get; set; } = 100;
+    /// <summary>You picked the item yourself (added by hand or corrected): tooltips never rename it.</summary>
+    public bool Picked { get; set; }
     public string? Icon { get; set; }   // picture of an unrecognised item (32x32 BGRA, base64)
 }
 
@@ -65,6 +67,17 @@ public sealed class Session
     public bool HideBuying { get; set; }
     /// <summary>The Buying tab's search text.</summary>
     public string BuySearch { get; set; } = "";
+    public string SellSource { get; set; } = "All sources";
+    public string SellType { get; set; } = "All types";
+    public string CardSearch { get; set; } = "";
+    public string CardSource { get; set; } = "All sources";
+    public string CardType { get; set; } = "All types";
+    public string BuyCardSearch { get; set; } = "";
+    public string BuyCardType { get; set; } = "All types";
+    public string BuySort { get; set; } = "name";
+    public bool BuySortDown { get; set; }
+    public List<string> ManualOrder { get; set; } = new();
+    public string BuyType { get; set; } = "All types";
     /// <summary>Every price on the card (and the total) at this percent of the price in the list: 1 to 200, 100 unchanged.</summary>
     public int PricePercent { get; set; } = 100;
     /// <summary>Tag each tile SALE (pink) or BUYING (blue). On unless unticked.</summary>
@@ -104,6 +117,14 @@ public sealed class Session
     public bool ShopOpen { get; set; }
     /// <summary>Sold listings of your own shop already taken off the list ("SELLER:item:bundle:price:n").</summary>
     public HashSet<string> ShopSold { get; set; } = new();
+    /// <summary>
+    /// Items you corrected: what the scanner reads ("id:N" for a recognised icon, "pic:HASH" for an unrecognised slot
+    /// picture) and the item it really is. Applied to every scan, so the fix sticks. Scrolls share icons, so they are
+    /// corrected per slot instead (see SaleItem.Picked).
+    /// </summary>
+    public Dictionary<string, int> Renames { get; set; } = new();
+    /// <summary>Manual identities keyed by the original shop listing, preserving rescan and sold detection.</summary>
+    public Dictionary<string, int> ShopRenames { get; set; } = new();
 
     // Settings as the page uses them.
     public bool PricesShown => ShowPrices ?? !HidePrices;

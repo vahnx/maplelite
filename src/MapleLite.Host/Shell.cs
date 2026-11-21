@@ -30,6 +30,7 @@ internal sealed class Shell : IAsyncDisposable
     public SessionRecorder Recorder { get; }
     /// <summary>System-wide shortcuts for plugins (Windows).</summary>
     public HotkeyService Hotkeys { get; }
+    readonly MarketArchive _market;
     public event Action<string>? Notified;
     readonly string _logPath = Path.Combine(AppPaths.Root, "maplelite.log");
 
@@ -48,6 +49,7 @@ internal sealed class Shell : IAsyncDisposable
         Plugins = new PluginManager(this);
         Recorder = new SessionRecorder(this);
         Hotkeys = new HotkeyService(Log);
+        _market = new MarketArchive(Log);
     }
 
     public void SetTarget(GameTarget target)
@@ -82,6 +84,7 @@ internal sealed class Shell : IAsyncDisposable
             },
             TimeSpan.FromSeconds(10));
         Overlay?.Dispose();
+        await _market.DisposeAsync();
         Hotkeys.Dispose();
         await report(92, "Stopping capture…");
         await Game.DisposeAsync();

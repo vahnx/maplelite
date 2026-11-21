@@ -17,13 +17,12 @@ using static MapleLite.Sdk.PanelKit;
 namespace MapleLite.Plugins.SaleCard;
 
 /// <summary>
-/// The Shop Card page: the Selling list (tabs as in the game, search, filters), the Buying list (the item database), the card preview, and the Card Design and
+/// The Shop Card page: available and selected items for Selling and Buying, the card preview, and the Card Design and
 /// Settings panels, which take the list's place while the preview stays in view.
 /// </summary>
 internal sealed class SaleCardPanel : UserControl
 {
-    const string ShowAll = "All items", ShowOn = "On the card", ShowOff = "Removed";
-    const double BodyHeight = 640;
+    const double BodyHeight = 500;
 
     readonly SaleCardEngine _engine;
     readonly IPluginContext _ctx;
@@ -31,13 +30,18 @@ internal sealed class SaleCardPanel : UserControl
     readonly ObservableCollection<SaleItem> _shown = new();
     readonly ItemsControl _list = new();
     readonly TextBlock _empty = new() { TextAlignment = TextAlignment.Center, TextWrapping = TextWrapping.Wrap, FontSize = 15, Margin = new Thickness(30), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-    readonly TextBox _search = new() { Watermark = "Search", Width = 190 };
-    readonly ComboBox _show = new() { Width = 170 };
-    readonly WrapPanel _tabs = new();
-    readonly WrapPanel _kinds = new();
+    readonly TextBox _search = new() { Watermark = "Search items…", HorizontalAlignment = HorizontalAlignment.Stretch };
+    readonly ComboBox _source = new() { MinWidth = 135, ItemsSource = new[] { "All sources", "Inventory", "Storage", "My FM shop", "Manual" }, SelectedIndex = 0 };
+    readonly ComboBox _type = new() { MinWidth = 135 };
+    readonly ObservableCollection<SaleItem> _selected = new();
+    readonly ItemsControl _selectedList = new();
+    readonly Button _missingStats = new() { HorizontalAlignment = HorizontalAlignment.Left };
+    bool _missingOnly;
+    readonly TextBlock _selectedTitle = PaneTitle("On your card · 0");
+    readonly TextBlock _selectedEmpty = Muted("Add items from the list on the left, or search the item database with + Add item.");
+    readonly TextBlock _selectionHidden = Muted("Selling is hidden from the exported card. Turn on Selling in the preview to show these items.");
     readonly WrapPanel _kindPrices = new();
     string _kindPricesFor = "\0";   // the kinds the sliders were last built for
-    readonly TextBlock _shopNote = Muted("Saved shop listings: scroll your own shop to read more. Uncheck sold or outdated items before sharing.");
     readonly Image _preview = new() { Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly, VerticalAlignment = VerticalAlignment.Top };
     readonly TextBlock _status = Muted(""), _browserStatus = Muted(""), _gameLine = Muted(""), _sellerLine = Text("", ThemeTokens.Text, 16, FontWeight.SemiBold);
     readonly TabControl _sections = new();
@@ -67,16 +71,15 @@ internal sealed class SaleCardPanel : UserControl
 
         var who = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, VerticalAlignment = VerticalAlignment.Center, Children = { _sellerLine, _gameLine } };
         // one click puts every selling item, or every item you're buying, on the card or takes them all off
-        _sellingOn.IsCheckedChanged += (_, _) => { if (_loading) return; S.HideSelling = _sellingOn.IsChecked != true; _engine.SettingsChanged(); };
-        _buyingOn.IsCheckedChanged += (_, _) => { if (_loading) return; S.HideBuying = _buyingOn.IsChecked != true; _engine.SettingsChanged(); };
+        _sellingOn.IsCheckedChanged += (_, _) => { if (_loading) return; S.HideSelling = _sellingOn.IsChecked != true; _selectionHidden.IsVisible = S.HideSelling; _engine.SettingsChanged(); };
+        _buyingOn.IsCheckedChanged += (_, _) => { if (_loading) return; S.HideBuying = _buyingOn.IsChecked != true; _buyHidden.IsVisible = S.HideBuying; _engine.SettingsChanged(); };
         ToolTip.SetTip(_sellingOn, "On: the items you're selling (the Selling tab) are on the card. Off: none of them are. Your ticks are kept either way.");
         ToolTip.SetTip(_buyingOn, "On: the items you're buying (the Buying tab) are on the card. Off: none of them are. Your ticks are kept either way.");
         var onCard = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center,
             Children = { new TextBlock { Text = "On the card:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) }.Themed(TextBlock.ForegroundProperty, ThemeTokens.TextMuted), _sellingOn, _buyingOn } };
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { onCard, _prices, save, copy } };
+        var actions = Wrap(onCard, _prices, save, copy, Button("Export CSV…", async () => await ExportCsvAsync()), Button("Import CSV…", async () => await ImportCsvAsync()));
         var top = new DockPanel { Margin = new Thickness(0, 0, 0, 10) };
-        DockPanel.SetDock(actions, Dock.Right);
-        top.Children.Add(actions);
+
         top.Children.Add(who);
 
         _sections.Items.Add(new TabItem { Header = "Selling", Content = BuildList() });
@@ -88,6 +91,7 @@ internal sealed class SaleCardPanel : UserControl
         _sections.SelectedIndex = Math.Clamp(_engine.S.Section, 0, 3);
         _sections.SelectionChanged += (_, _) => { if (_sections.SelectedIndex >= 0 && _engine.S.Section != _sections.SelectedIndex) { _engine.S.Section = _sections.SelectedIndex; _engine.SettingsChanged(); } };
         _sections.Height = BodyHeight;
+        _sections.SizeChanged += (_, _) => _sections.Height = _sections.Bounds.Width < 860 ? 780 : BodyHeight;
 
         var maximize = Button("⛶  Maximize", ToggleMaximized);
         _maximize = maximize;
@@ -96,6 +100,15 @@ internal sealed class SaleCardPanel : UserControl
         var previewBar = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
         DockPanel.SetDock(maximize, Dock.Right);
         previewBar.Children.Add(maximize);
+        var editCard = new ToggleButton { Content = "Edit card", Margin = new Thickness(0, 0, 8, 0) };
+        DockPanel.SetDock(editCard, Dock.Right); previewBar.Children.Add(editCard);
+        editCard.IsCheckedChanged += (_, _) =>
+        {
+            _liveEditorScroll.IsVisible = editCard.IsChecked == true;
+            LayoutCardEditor();
+            _previewBox.Height = _liveEditorScroll.IsVisible ? 650 : _maximized ? 720 : 400;
+            RefreshCardEditor();
+        };
         // the price slider: every price on the card (and the total) at 1% to 200% of the list's; clicking the figure puts it back to 100%
         _priceSlider.ValueChanged += (_, _) =>
         {
@@ -111,18 +124,27 @@ internal sealed class SaleCardPanel : UserControl
             Children = { new TextBlock { Text = "Prices", VerticalAlignment = VerticalAlignment.Center }.Themed(TextBlock.ForegroundProperty, ThemeTokens.TextMuted), _priceSlider, _pricePercent } };
         DockPanel.SetDock(priceBar, Dock.Right);
         previewBar.Children.Add(priceBar);
-        previewBar.Children.Add(new TextBlock { Text = "Your card", VerticalAlignment = VerticalAlignment.Center }.Themed(TextBlock.ForegroundProperty, ThemeTokens.TextMuted));
+        previewBar.Children.Add(new TextBlock { Text = "Card preview", FontSize = 18, FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center }.Themed(TextBlock.ForegroundProperty, ThemeTokens.TextMuted));
         var previewDock = new DockPanel();
+        actions.HorizontalAlignment = HorizontalAlignment.Right;
+        actions.Margin = new Thickness(0, 12, 0, 0);
+        DockPanel.SetDock(actions, Dock.Bottom);
+        previewDock.Children.Add(actions);
         DockPanel.SetDock(previewBar, Dock.Top);
         previewDock.Children.Add(previewBar);
-        previewDock.Children.Add(new ScrollViewer { Content = _preview, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
+        _previewContent.SizeChanged += (_, _) => LayoutCardEditor();
+        _previewContent.Children.Add(_preview);
+        Grid.SetColumn(_liveEditorScroll, 2); _previewContent.Children.Add(_liveEditorScroll);
+        _liveEditorScroll.Content = _liveEditor;
+        _liveEditor.LostFocus += (_, _) => Dispatcher.UIThread.Post(RefreshCardEditor, DispatcherPriority.Background);
+        previewDock.Children.Add(_previewContent);
         var previewBox = Card(previewDock, 10);
-        previewBox.Height = BodyHeight;
+        previewBox.Height = 400;
         _previewBox = previewBox;
         KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Escape && _maximized) { ToggleMaximized(); e.Handled = true; } };
-        var body = new Grid { ColumnDefinitions = new ColumnDefinitions("*,16,460") };
-        Grid.SetColumn(_sections, 0);
-        Grid.SetColumn(previewBox, 2);
+        var body = new Grid { RowDefinitions = new RowDefinitions("Auto,16,Auto") };
+        Grid.SetRow(_sections, 0);
+        Grid.SetRow(previewBox, 2);
         body.Children.Add(_sections);
         body.Children.Add(previewBox);
 
@@ -133,12 +155,17 @@ internal sealed class SaleCardPanel : UserControl
         foot.Margin = new Thickness(2, 8, 0, 0);
         DockPanel.SetDock(foot, Dock.Bottom);
         root.Children.Add(foot);
-        root.Children.Add(body);
+        root.Children.Add(new ScrollViewer { Content = body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
         Content = root;
 
-        _engine.Changed += () => Dispatcher.UIThread.Post(OnEngineChanged);
-        _engine.CardChanged += () => Dispatcher.UIThread.Post(QueueRender);
-        AttachedToVisualTree += (_, _) => { LoadFromSession(); OnEngineChanged(); QueueRender(); };
+        void EngineChanged() => Dispatcher.UIThread.Post(() => { if (TopLevel.GetTopLevel(this) != null) OnEngineChanged(); });
+        void CardChanged() => Dispatcher.UIThread.Post(QueueRender);
+        AttachedToVisualTree += (_, _) => { _engine.Changed += EngineChanged; _engine.CardChanged += CardChanged; LoadFromSession(); OnEngineChanged(); QueueRender(); };
+        DetachedFromVisualTree += (_, _) =>
+        {
+            _engine.Changed -= EngineChanged; _engine.CardChanged -= CardChanged; _render.Stop();
+            _preview.Source = null; _card?.bitmap.Dispose(); _card = null;
+        };
     }
 
     // ---------------------------------------------------------------- list
@@ -146,42 +173,136 @@ internal sealed class SaleCardPanel : UserControl
     Control BuildList()
     {
         _search.TextChanged += (_, _) => { if (_loading) return; S.Search = _search.Text ?? ""; RefreshList(); _engine.SettingsChanged(); };
-        _show.SelectionChanged += (_, _) => { if (_loading || _show.SelectedItem is not string s) return; S.Show = s; RefreshList(); _engine.SettingsChanged(); };
-        var checkAll = Button("Check all", () => _engine.SetIncluded(_shown, true));
-        var uncheckAll = Button("Uncheck all", () => _engine.SetIncluded(_shown, false));
-        ToolTip.SetTip(checkAll, "Puts every item shown in the list on the card");
-        ToolTip.SetTip(uncheckAll, "Takes every item shown in the list off the card");
-        var filterRow = new WrapPanel();
-        var allButtons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { checkAll, uncheckAll } };
-        filterRow.Children.Add(allButtons);
-        filterRow.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { _search, _show } });
-
+        _source.SelectionChanged += (_, _) => { if (_loading) return; S.SellSource = _source.SelectedItem as string ?? "All sources"; RefreshList(); _engine.SettingsChanged(); };
+        _type.SelectionChanged += (_, _) => { if (_loading) return; S.SellType = _type.SelectedItem as string ?? "All types"; RefreshList(); _engine.SettingsChanged(); };
+        var sync = Button("Sync", () => { }, accent: true);
+        sync.Click += async (_, _) =>
+        {
+            if (TopLevel.GetTopLevel(this) is not Window owner) return;
+            sync.IsEnabled = false;
+            if (!await ConfirmWindow.AskAsync(owner, "Sync visible game items?",
+                new[] { "Adds recognized visible Inventory, Storage and own-shop items to your card.",
+                    "Updates scanned quantities. Items confirmed gone from visible slots may be removed.",
+                    "Open each tab and scroll in game to read the rest. This does not wipe your card." },
+                new[] { "Manually added items, unseen items and your Buying list",
+                    "Recorded stats and custom prices on retained items. Details of removed scanned items may need to be read again." }, "Sync", "This updates")) { sync.IsEnabled = true; return; }
+            sync.Content = "Syncing…";
+            try { await _engine.RefreshNowAsync(); }
+            catch (Exception ex) { _engine.Report("Sync failed: " + ex.Message); }
+            finally { sync.IsEnabled = true; sync.Content = "Sync"; RefreshList(); }
+        };
+        ToolTip.SetTip(sync, "Refresh visible inventory, storage or your own shop. Open each tab in game to read it. Recognized visible items are added to your card. Manual and unseen items are kept.");
+        var add = Button("+ Add item", async () => await AddItemAsync());
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right, Children = { sync, add } };
+        var help = Muted("Sync adds visible game items to your card. Hover equipment to read its stats.");
+        var toolbar = new DockPanel { Margin = new Thickness(0, 4, 0, 12) };
+        DockPanel.SetDock(actions, Dock.Right); toolbar.Children.Add(actions); toolbar.Children.Add(help);
+        help.VerticalAlignment = VerticalAlignment.Center;
+        var filters = new Grid { ColumnDefinitions = new ColumnDefinitions("*,8,Auto,8,Auto"), Margin = new Thickness(0, 10, 0, 12) };
+        filters.Children.Add(_search); Grid.SetColumn(_source, 2); filters.Children.Add(_source); Grid.SetColumn(_type, 4); filters.Children.Add(_type);
         _list.ItemsSource = _shown;
-        _list.ItemTemplate = new FuncDataTemplate<SaleItem>((item, _) => Row());
-        _list.Margin = new Thickness(8);   // on the list, not the ScrollViewer: its padding is left out when measuring, so full-width rows overflowed
-        var scroll = new ScrollViewer { Content = _list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        _empty.Themed(TextBlock.ForegroundProperty, ThemeTokens.TextMuted);
-        var listDock = new DockPanel();
-        var headers = SortHeaders();
-        DockPanel.SetDock(headers, Dock.Top);
-        listDock.Children.Add(headers);
-        listDock.Children.Add(new Panel { Children = { _empty, scroll } });
-        var listBox = Card(listDock, 0);
-
-        var kinds = new Expander { Header = "Kinds of item on the card", Content = Stack(4,
-            Muted("Include or remove whole groups; individual items can still be changed below."), _kinds,
-            Muted("Price % by kind: raises or lowers the card price of every item of that kind, on top of the card's slider. Each item's own Price % applies on top of this."),
-            _kindPrices) };
-        _shopNote.TextWrapping = TextWrapping.Wrap;
-        var head = Stack(8, filterRow, _tabs, _shopNote, kinds);
-        head.Margin = new Thickness(0, 0, 0, 10);
-        var dock = new DockPanel();
-        DockPanel.SetDock(head, Dock.Top);
-        dock.Children.Add(head);
-        dock.Children.Add(listBox);
-        // Rebuilding the list while an item's box has focus would throw away what is being typed: wait for focus to leave.
-        _list.LostFocus += (_, _) => Dispatcher.UIThread.Post(() => { if (_listDirty && !_list.IsKeyboardFocusWithin) RefreshList(); }, DispatcherPriority.Background);
+        _list.ItemTemplate = new FuncDataTemplate<SaleItem>((item, _) => AvailableRow(item!));
+        _selectedList.ItemsSource = _selected;
+        _selectedList.ItemTemplate = new FuncDataTemplate<SaleItem>((item, _) => Row());
+        var available = ListPane(PaneTitle("Available items"), Stack(0, filters, SelectedHeaders()), _list, _empty);
+        _missingStats.Click += (_, _) => { _missingOnly = !_missingOnly; RefreshList(force: true); };
+        ToolTip.SetTip(_missingStats, "Show selected equipment or scrolls whose stats are incomplete. Each row has a Read stats button.");
+        var selected = ListPane(_selectedTitle, Stack(4, SelectedFilters(false), _selectionHidden, _missingStats, SelectedHeaders()), _selectedList, _selectedEmpty,
+            Muted("Removing an item here only removes it from the card."));
+        var columns = SplitLists(available, selected);
+        var dock = new DockPanel(); DockPanel.SetDock(toolbar, Dock.Top); dock.Children.Add(toolbar); dock.Children.Add(columns);
+        _selectedList.LostFocus += (_, _) => Dispatcher.UIThread.Post(() => { if (_listDirty && !_selectedList.IsKeyboardFocusWithin) RefreshList(); }, DispatcherPriority.Background);
         return dock;
+    }
+
+    static TextBlock PaneTitle(string label) => Text(label, size: 18, weight: FontWeight.SemiBold);
+
+    readonly List<(Button button, string key, string label, bool buying)> _columnButtons = new();
+    Control SelectedHeaders(bool buying = false)
+    {
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,64,92,72"), Margin = new Thickness(0, 8, 8, 2) };
+        foreach (var (key, label, col) in new[] { ("name", "Name", 0), ("qty", "Qty", 1), ("price", "Price", 2) })
+        {
+            var button = Button(label, () =>
+            {
+                string current = buying ? S.BuySort : S.ListSort;
+                bool down = buying ? S.BuySortDown : S.ListSortDown;
+                if (current != key) { current = key; down = false; }
+                else if (!down) down = true;
+                else { current = ""; down = false; }
+                if (buying) { S.BuySort = current; S.BuySortDown = down; }
+                else { S.ListSort = current; S.ListSortDown = down; }
+                UpdateColumnHeaders(); RefreshList(); RefreshBuying(); _engine.SettingsChanged();
+            });
+            button.Padding = new Thickness(4, 2); button.FontSize = 12;
+            ToolTip.SetTip(button, "Click for ascending, descending, then original order. Changes the list only.");
+            Grid.SetColumn(button, col); row.Children.Add(button); _columnButtons.Add((button, key, label, buying));
+        }
+        UpdateColumnHeaders(); return row;
+    }
+
+    void UpdateColumnHeaders()
+    {
+        foreach (var (button, key, label, buying) in _columnButtons)
+            button.Content = (buying ? S.BuySort : S.ListSort) == key ? label + ((buying ? S.BuySortDown : S.ListSortDown) ? " ▼" : " ▲") : label;
+    }
+
+    Control SelectedFilters(bool buying)
+    {
+        var search = new TextBox { Watermark = buying ? "Search buying card…" : "Search selling card…" };
+        var type = new ComboBox { MinWidth = 120, ItemsSource = new[] { "All types" }.Concat(Categories.Order).ToArray() };
+        var source = new ComboBox { MinWidth = 120, ItemsSource = new[] { "All sources", "Inventory", "Storage", "My FM shop", "Manual" } };
+        void Load() { search.Text = buying ? S.BuyCardSearch : S.CardSearch; type.SelectedItem = buying ? S.BuyCardType : S.CardType; source.SelectedItem = S.CardSource; }
+        Load(); _loaders.Add(Load);
+        void Changed()
+        {
+            if (_loading) return;
+            if (buying) { S.BuyCardSearch = search.Text ?? ""; S.BuyCardType = type.SelectedItem as string ?? "All types"; RefreshBuying(); }
+            else { S.CardSearch = search.Text ?? ""; S.CardType = type.SelectedItem as string ?? "All types"; S.CardSource = source.SelectedItem as string ?? "All sources"; RefreshList(); }
+            _engine.SettingsChanged();
+        }
+        search.TextChanged += (_, _) => Changed(); type.SelectionChanged += (_, _) => Changed(); source.SelectionChanged += (_, _) => Changed();
+        var filters = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) }; if (!buying) filters.Children.Add(source); filters.Children.Add(type);
+        return Stack(4, search, filters);
+    }
+
+    static Control ListPane(Control title, Control filters, Control list, Control empty, Control? footer = null)
+    {
+        var dock = new DockPanel();
+        list.Margin = new Thickness(0, 0, 10, 0);
+        var head = Stack(0, title, filters); DockPanel.SetDock(head, Dock.Top); dock.Children.Add(head);
+        if (footer != null) { footer.Margin = new Thickness(0, 10, 0, 0); DockPanel.SetDock(footer, Dock.Bottom); dock.Children.Add(footer); }
+        empty.Margin = new Thickness(16, 24); empty.HorizontalAlignment = HorizontalAlignment.Center;
+        dock.Children.Add(new Panel { Children = { empty, new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled } } });
+        return Card(dock, 14);
+    }
+
+    static Grid SplitLists(Control available, Control selected)
+    {
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,14,*") };
+        grid.Children.Add(available); Grid.SetColumn(selected, 2); grid.Children.Add(selected);
+        bool? stacked = null;
+        grid.SizeChanged += (_, _) =>
+        {
+            bool narrow = grid.Bounds.Width < 860;
+            if (stacked == narrow) return;
+            stacked = narrow;
+            grid.ColumnDefinitions = new ColumnDefinitions(narrow ? "*" : "*,14,*");
+            grid.RowDefinitions = new RowDefinitions(narrow ? "*,14,*" : "*");
+            Grid.SetColumn(selected, narrow ? 0 : 2); Grid.SetRow(selected, narrow ? 2 : 0);
+        };
+        return grid;
+    }
+
+    Control AvailableRow(SaleItem item)
+    {
+        var add = Button("+ Add", () => { _engine.SetIncluded(new[] { item }, true); RefreshList(); }, accent: true);
+        add.VerticalAlignment = VerticalAlignment.Center;
+        var name = Text(item.Name, size: 14, weight: FontWeight.SemiBold); name.TextWrapping = TextWrapping.NoWrap; name.TextTrimming = TextTrimming.CharacterEllipsis;
+        var words = Stack(3, name, Muted(CardSelection.SourceOf(item))); words.VerticalAlignment = VerticalAlignment.Center;
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), Margin = new Thickness(0, 10) };
+        row.Children.Add(ItemIcon(item.ItemId)); Grid.SetColumn(words, 1); row.Children.Add(words); Grid.SetColumn(add, 2); row.Children.Add(add);
+        return new Border { Child = row, BorderThickness = new Thickness(0, 0, 0, 1) }.Themed(Border.BorderBrushProperty, ThemeTokens.Border);
     }
 
     /// <summary>A price-percent slider (1–200%) with its figure beside it, as a button that can put it back to 100%.</summary>
@@ -203,15 +324,17 @@ internal sealed class SaleCardPanel : UserControl
             ToolTip.SetTip(b, tip);
             return b;
         }
-        var include = new CheckBox { VerticalAlignment = VerticalAlignment.Center, [!ToggleButton.IsCheckedProperty] = new Binding(nameof(SaleItem.Include)) { Mode = BindingMode.TwoWay } };
-        ToolTip.SetTip(include, "On the card");
+        var include = new Button { Content = "−", VerticalAlignment = VerticalAlignment.Center, Padding = new Thickness(8, 4), Margin = new Thickness(6, 0, 0, 0) };
+        ToolTip.SetTip(include, "Remove from card");
+        include.Click += (_, _) => { if (include.DataContext is SaleItem it) { _engine.SetIncluded(new[] { it }, false); _selectedList.Focus(); RefreshList(force: true); } };
         var icon = new Image { Width = 30, Height = 30, [!Image.SourceProperty] = new Binding(nameof(SaleItem.Icon)) };
         RenderOptions.SetBitmapInterpolationMode(icon, Avalonia.Media.Imaging.BitmapInterpolationMode.None);
         var tile = new Border { Width = 34, Height = 34, CornerRadius = new CornerRadius(5), Background = new SolidColorBrush(Color.Parse("#E1DFD5")), Margin = new Thickness(8, 0, 10, 0), Child = icon };
         var name = new TextBlock { FontWeight = FontWeight.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, [!TextBlock.TextProperty] = new Binding(nameof(SaleItem.Name)) }
             .Themed(TextBlock.ForegroundProperty, ThemeTokens.Text);
         var rate = new RatePicker();   // the going rate, as buttons that put a figure in the price box
-        var words = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Children = { name } };
+        var source = Muted("");
+        var words = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 3, Children = { name, source } };
         rate.Margin = new Thickness(52, 2, 0, 0);
         var qty = Box(nameof(SaleItem.Qty), 56, "qty", "Quantity");
         var price = Box(nameof(SaleItem.Custom), 86, "price", "Your price. Leave it blank to use the going rate (or Offer when there is none), or click a figure under the name to put it here.");
@@ -229,12 +352,14 @@ internal sealed class SaleCardPanel : UserControl
             if (!settingPercent && adjust.slider.DataContext is SaleItem it && it.PricePercent != pct) it.PricePercent = pct;
         };
         adjust.label.Click += (_, _) => adjust.slider.Value = 100;
-        var line = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto,Auto,Auto,Auto") };
-        foreach (var (c, i) in new Control[] { include, tile, words, adjust.panel, qty, price, more }.Select((c, i) => (c, i))) { Grid.SetColumn(c, i); line.Children.Add(c); }
+        var line = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto,Auto,Auto") };
+        foreach (var (c, i) in new Control[] { tile, words, qty, price, more, include }.Select((c, i) => (c, i))) { Grid.SetColumn(c, i); line.Children.Add(c); }
         price.Margin = new Thickness(6, 0, 0, 0); qty.Margin = new Thickness(8, 0, 0, 0);
 
         // details: name, stats, slots, read tooltip, look it up
         var details = new StackPanel { Spacing = 4, Margin = new Thickness(52, 8, 0, 4) };
+        details.Children.Add(Muted("Price adjustment for this item"));
+        details.Children.Add(adjust.panel);
         details.Children.Add(Muted("Name (edit if wrong)"));
         details.Children.Add(new TextBox { [!TextBox.TextProperty] = new Binding(nameof(SaleItem.Name)) { Mode = BindingMode.TwoWay } });
         var equip = new StackPanel { Spacing = 4 };
@@ -277,19 +402,47 @@ internal sealed class SaleCardPanel : UserControl
             links.Children.Add(b);
         }
         details.Children.Add(links);
+        // when a scan named it wrongly: pick the real item; items added by hand can be taken off the list
+        var change = new Button { Content = "Change item…", FontSize = 11, Margin = new Thickness(0, 0, 6, 4) };
+        ToolTip.SetTip(change, "Wrong item? Search the item database for the right one. The fix sticks: later scans of this slot (or this icon) give the item you picked, and hovering it won't rename it.");
+        change.Click += async (s, _) => { if ((s as Control)?.DataContext is SaleItem it) await ChangeItemAsync(it); };
+        var remove = new Button { Content = "Remove from list", FontSize = 11, Margin = new Thickness(0, 0, 6, 4) };
+        ToolTip.SetTip(remove, "Takes this item you added by hand off the list");
+        remove.Click += (s, _) => { if ((s as Control)?.DataContext is SaleItem it) _engine.RemoveAdded(it); };
+        details.Children.Add(new WrapPanel { Margin = new Thickness(0, 2, 0, 0), Children = { change, remove } });
         details[!IsVisibleProperty] = more[!ToggleButton.IsCheckedProperty];
-        var border = Card(new StackPanel { Children = { line, rate, details } }, 8);
+        details.Children.Add(rate);
+        var missingLabel = Muted("Stats missing — hover this item in-game with its tooltip visible.");
+        var readMissing = new Button { Content = "Read stats (5s)", HorizontalAlignment = HorizontalAlignment.Left };
+        readMissing.Click += async (_, _) =>
+        {
+            if (readMissing.DataContext is not SaleItem item) return;
+            if (item.IsAdded) { more.IsChecked = true; return; }
+            readMissing.IsEnabled = false;
+            try { await _engine.ReadEquipmentAsync(item); }
+            catch (Exception ex) { _engine.Report("Couldn't read stats: " + ex.Message); }
+            finally { readMissing.IsEnabled = true; RefreshList(); }
+        };
+        var missingNotice = Stack(4, missingLabel, readMissing);
+        missingNotice.Margin = new Thickness(52, 6, 0, 4);
+        missingNotice[!IsVisibleProperty] = new Binding(nameof(SaleItem.MissingStats));
+        var border = new Border { Child = Stack(3, line, missingNotice, details), Padding = new Thickness(0, 12), BorderThickness = new Thickness(0, 0, 0, 1) }.Themed(Border.BorderBrushProperty, ThemeTokens.Border);
         border.Margin = new Thickness(0, 0, 0, 4);
-        border[!OpacityProperty] = new Binding(nameof(SaleItem.CardOpacity));
+
         border.DataContextChanged += (_, _) =>
         {
             var it = border.DataContext as SaleItem;
+            readMissing.Content = it?.IsAdded == true ? "Enter stats" : "Read stats (5s)";
+            missingLabel.Text = it?.IsAdded == true ? "Stats missing — enter the stats for this manually added item." : "Stats missing — hover this item in-game with its tooltip visible.";
+            source.Text = it == null ? "" : CardSelection.SourceOf(it) + (it.IsEquipment && it.SlotRow >= 0 && it.SlotCol >= 0 ? $" · row {it.SlotRow + 1}, slot {it.SlotCol + 1}" : "");
             settingPercent = true;
             adjust.slider.Value = it?.PricePercent ?? 100;
             settingPercent = false;
             equip.IsVisible = it is { IsEquipment: true } or { IsScroll: true };
             // scrolls have a success rate and an effect, not upgrade slots
             slotsLabel.IsVisible = slots.IsVisible = it is { IsEquipment: true };
+            remove.IsVisible = it is { IsAdded: true };
+            readTip.IsVisible = it is not { IsAdded: true };   // nothing in the game to hover for it
         };
         return border;
     }
@@ -300,8 +453,14 @@ internal sealed class SaleCardPanel : UserControl
     // ---------------------------------------------------------------- buying: the whole item database
 
     const int BuyResultsMax = 120;
-    readonly TextBox _buySearch = new() { Watermark = "Search every item by name", Width = 300 };
+    readonly TextBox _buySearch = new() { Watermark = "Search the item database…", HorizontalAlignment = HorizontalAlignment.Stretch };
     readonly StackPanel _buyRows = new() { Spacing = 4 };
+    readonly StackPanel _buySelectedRows = new() { Spacing = 4 };
+    readonly TextBlock _buySelectedTitle = PaneTitle("On your card · 0");
+    readonly TextBlock _buySelectedEmpty = Muted("Search for an item, then press + Add to start your Buying list.");
+    readonly TextBlock _buyHidden = Muted("Buying is hidden from the exported card. Turn on Buying in the preview to show these items.");
+    readonly ComboBox _buyType = new() { MinWidth = 145, ItemsSource = new[] { "All types" }.Concat(Categories.Order).ToArray(), SelectedIndex = 0 };
+    string _buySelectedShown = "\0";
     readonly TextBlock _buyNote = Muted("");
     string _buyShown = "";   // what the rows show now, to rebuild only when it changes
 
@@ -312,23 +471,18 @@ internal sealed class SaleCardPanel : UserControl
     /// </summary>
     Control BuildBuying()
     {
-        _buySearch.TextChanged += (_, _) => { if (_loading) return; S.BuySearch = _buySearch.Text ?? ""; RefreshBuying(force: true); _engine.SettingsChanged(); };
-        var untick = Button("Untick all", () =>
-        {
-            foreach (var card in _engine.Items.Where(i => i.Tab == SaleCardEngine.BuyTab).ToList())
-                if (_engine.Vision?.Catalog.TryGetValue(card.ItemId, out var cat) == true) _engine.SetBuying(cat, false);
-            RefreshBuying(force: true);
-        });
-        ToolTip.SetTip(untick, "Takes every item off your Buying list");
-        var head = Stack(6, new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { _buySearch, untick } },
-            Muted("Tick what you want to buy. It goes on the card with a blue BUYING tag; set how many and what you'll pay. Use the Buying switch at the top to show or hide them all."),
-            _buyNote);
-        head.Margin = new Thickness(0, 0, 0, 10);
+        _buySearch.TextChanged += (_, _) => { if (_loading) return; S.BuySearch = _buySearch.Text ?? ""; RefreshBuying(); _engine.SettingsChanged(); };
+        _buyType.SelectionChanged += (_, _) => { if (_loading) return; S.BuyType = _buyType.SelectedItem as string ?? "All types"; RefreshBuying(); _engine.SettingsChanged(); };
+        var filters = new Grid { ColumnDefinitions = new ColumnDefinitions("*,8,Auto"), Margin = new Thickness(0, 10, 0, 10) };
+        filters.Children.Add(_buySearch); Grid.SetColumn(_buyType, 2); filters.Children.Add(_buyType);
+        var available = ListPane(PaneTitle("Item database"), Stack(0, filters, _buyNote), _buyRows, new TextBlock());
+        var selected = ListPane(_buySelectedTitle, Stack(4, SelectedFilters(true), _buyHidden, SelectedHeaders(true)), _buySelectedRows, _buySelectedEmpty,
+            Muted("Set how many you want and your offer. Expand an item to add stat requirements."));
         var dock = new DockPanel();
-        DockPanel.SetDock(head, Dock.Top);
-        dock.Children.Add(head);
-        _buyRows.Margin = new Thickness(8);   // on the rows, not the ScrollViewer: its padding is left out when measuring, so a full-width row overflowed
-        dock.Children.Add(Card(new ScrollViewer { Content = _buyRows, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }, 0));
+        var help = Muted("Find what you want to buy, then add it to your card. Your inventory is not changed.");
+        help.Margin = new Thickness(0, 8, 0, 16); DockPanel.SetDock(help, Dock.Top); dock.Children.Add(help);
+        dock.Children.Add(SplitLists(available, selected));
+        _buySelectedRows.LostFocus += (_, _) => Dispatcher.UIThread.Post(() => RefreshBuying(), DispatcherPriority.Background);
         return dock;
     }
 
@@ -336,30 +490,30 @@ internal sealed class SaleCardPanel : UserControl
     {
         if (_engine.Vision is not { } vision) return;
         var q = (S.BuySearch ?? "").Trim();
-        var buying = _engine.Items.Where(i => i.Tab == SaleCardEngine.BuyTab).ToList();
+        var buying = _engine.Items.Where(i => i.IsWanted).ToList();
         var have = buying.Select(i => i.ItemId).ToHashSet();
-        var matches = q.Length == 0 ? new List<CatalogItem>()
-            : vision.Catalog.Values.Where(c => c.name.Contains(q, StringComparison.OrdinalIgnoreCase) && !have.Contains(c.id))
-                .OrderBy(c => c.name.StartsWith(q, StringComparison.OrdinalIgnoreCase) ? 0 : 1).ThenBy(c => c.name, StringComparer.OrdinalIgnoreCase).ToList();
-        var signature = string.Join(",", buying.Select(i => i.ItemId)) + "|" + q + "|" + string.Join(",", matches.Take(BuyResultsMax).Select(c => c.id));
-        if (!force && (signature == _buyShown || _buyRows.IsKeyboardFocusWithin)) return;
-        _buyShown = signature;
-        _buyRows.Children.Clear();
-        if (buying.Count > 0)
+        var matches = CardSelection.CatalogMatches(vision.Catalog.Values, q, S.BuyType, have).ToList();
+        var signature = string.Join(",", buying.Select(i => i.ItemId)) + "|" + q + "|" + S.BuyType;
+        if (force || signature != _buyShown)
         {
-            _buyRows.Children.Add(Title($"Buying ({buying.Count})"));
-            foreach (var card in buying) _buyRows.Children.Add(BuyRow(card));
-        }
-        if (q.Length > 0)
-        {
-            var head = Title(matches.Count == 0 ? "No items match" : $"Matches ({matches.Count})");
-            head.Margin = new Thickness(0, buying.Count > 0 ? 10 : 0, 0, 0);
-            _buyRows.Children.Add(head);
+            _buyShown = signature;
+            _buyRows.Children.Clear();
             foreach (var cat in matches.Take(BuyResultsMax)) _buyRows.Children.Add(CatalogRow(cat));
+            if (matches.Count == 0) _buyRows.Children.Add(Muted("No available items match. Try another name or item type."));
         }
-        _buyNote.Text = q.Length == 0 ? $"Type a name to search all {vision.Catalog.Count:N0} items."
-            : matches.Count > BuyResultsMax ? $"Showing the first {BuyResultsMax} of {matches.Count} matches: type more of the name to narrow it down." : "";
-        if (buying.Count == 0 && q.Length == 0) _buyRows.Children.Add(Muted("Nothing on your Buying list yet: search for an item above and tick it."));
+        var filtered = Sorted(buying.Where(i => CardSelection.Selected(i, true, S.BuyCardSearch, null, S.BuyCardType)), true).ToList();
+        var selectedSignature = string.Join(",", filtered.Select(i => i.Key));
+        if ((force || selectedSignature != _buySelectedShown) && (force || !_buySelectedRows.IsKeyboardFocusWithin))
+        {
+            _buySelectedShown = selectedSignature;
+            _buySelectedRows.Children.Clear();
+            foreach (var card in filtered) _buySelectedRows.Children.Add(BuyRow(card));
+        }
+        _buySelectedTitle.Text = $"On your card · {buying.Count}";
+        _buySelectedEmpty.IsVisible = filtered.Count == 0;
+        _buySelectedEmpty.Text = buying.Count > 0 ? "No selected items match these filters." : "Search for an item, then press + Add to start your Buying list.";
+        _buyHidden.IsVisible = S.HideBuying;
+        _buyNote.Text = matches.Count > BuyResultsMax ? $"Showing {BuyResultsMax} of {matches.Count:N0} items. Search to narrow the list." : $"{matches.Count:N0} available items";
     }
 
     Control ItemIcon(int id)
@@ -372,15 +526,15 @@ internal sealed class SaleCardPanel : UserControl
     /// <summary>An item on your Buying list: untick to remove it; its quantity and price are what the card shows.</summary>
     Control BuyRow(SaleItem card)
     {
-        var tick = new CheckBox { IsChecked = true, VerticalAlignment = VerticalAlignment.Center };
-        ToolTip.SetTip(tick, "Untick to take it off your Buying list");
-        tick.IsCheckedChanged += (_, _) =>
+        var tick = Button("−", () =>
         {
-            if (tick.IsChecked == true || _engine.Vision?.Catalog.TryGetValue(card.ItemId, out var cat) != true) return;
-            _engine.SetBuying(cat, false);
-            Dispatcher.UIThread.Post(() => RefreshBuying(force: true));
-        };
-        var name = new TextBlock { Text = card.Name, FontWeight = FontWeight.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis }.Themed(TextBlock.ForegroundProperty, ThemeTokens.Text);
+            if (_engine.Vision?.Catalog.TryGetValue(card.ItemId, out var cat) == true) _engine.SetBuying(cat, false);
+            RefreshBuying(force: true);
+        });
+        tick.VerticalAlignment = VerticalAlignment.Center;
+        tick.Padding = new Thickness(8, 4); tick.Margin = new Thickness(6, 0, 0, 0);
+        ToolTip.SetTip(tick, "Remove from Buying card");
+        var name = new TextBlock { DataContext = card, [!TextBlock.TextProperty] = new Binding(nameof(SaleItem.Name)), FontWeight = FontWeight.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis }.Themed(TextBlock.ForegroundProperty, ThemeTokens.Text);
         var rate = new RatePicker { DataContext = card, Margin = new Thickness(52, 2, 0, 0) };
         var qty = new TextBox { Width = 56, Watermark = "qty", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0), [!TextBox.TextProperty] = new Binding(nameof(SaleItem.Qty)) { Mode = BindingMode.TwoWay } };
         var price = new TextBox { Width = 86, Watermark = "price", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 0, 0), [!TextBox.TextProperty] = new Binding(nameof(SaleItem.Custom)) { Mode = BindingMode.TwoWay } };
@@ -398,12 +552,14 @@ internal sealed class SaleCardPanel : UserControl
         // The name takes the room left after the boxes; FitWidth below keeps a long one trimmed instead of widening the row.
         var line = new DockPanel { DataContext = card };
         var icon = ItemIcon(card.ItemId);
-        foreach (var c in new Control[] { tick, icon }) { DockPanel.SetDock(c, Dock.Left); line.Children.Add(c); }
-        foreach (var c in new Control[] { more, price, qty }) { DockPanel.SetDock(c, Dock.Right); line.Children.Add(c); }
+        foreach (var c in new Control[] { icon }) { DockPanel.SetDock(c, Dock.Left); line.Children.Add(c); }
+        foreach (var c in new Control[] { tick, more, price, qty }) { DockPanel.SetDock(c, Dock.Right); line.Children.Add(c); }
         line.Children.Add(new StackPanel { VerticalAlignment = VerticalAlignment.Center, Children = { name } });
         var details = WantedEditor(card);
         details[!IsVisibleProperty] = more[!ToggleButton.IsCheckedProperty];
-        return new FitWidth { Child = Card(new StackPanel { Children = { line, rate, wants, details } }, 8) };
+        var expanded = Stack(4, rate, details);
+        expanded[!IsVisibleProperty] = more[!ToggleButton.IsCheckedProperty];
+        return new FitWidth { Child = new Border { Child = Stack(3, line, wants, expanded), Padding = new Thickness(0, 12), BorderThickness = new Thickness(0, 0, 0, 1) }.Themed(Border.BorderBrushProperty, ThemeTokens.Border) };
     }
 
     static readonly string[] WantedStats =
@@ -465,143 +621,63 @@ internal sealed class SaleCardPanel : UserControl
     /// <summary>A catalog item found by the search: tick it to add it to your Buying list.</summary>
     Control CatalogRow(CatalogItem cat)
     {
-        var tick = new CheckBox { IsChecked = false, VerticalAlignment = VerticalAlignment.Center };
-        ToolTip.SetTip(tick, "Tick to add it to your Buying list (it goes on the card with a BUYING tag)");
-        tick.IsCheckedChanged += (_, _) =>
-        {
-            if (tick.IsChecked != true) return;
-            _engine.SetBuying(cat, true);
-            Dispatcher.UIThread.Post(() => RefreshBuying(force: true));
-        };
-        var name = new TextBlock { Text = cat.name, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center }.Themed(TextBlock.ForegroundProperty, ThemeTokens.Text);
-        var kind = new TextBlock { Text = Categories.Of(cat.id), FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) }.Themed(TextBlock.ForegroundProperty, ThemeTokens.TextMuted);
-        var line = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto") };
-        foreach (var (c, i) in new Control[] { tick, ItemIcon(cat.id), name, kind }.Select((c, i) => (c, i))) { Grid.SetColumn(c, i); line.Children.Add(c); }
-        return Card(line, 6);
+        var add = Button("+ Add", () => { _engine.SetBuying(cat, true); RefreshBuying(force: true); }, accent: true);
+        add.VerticalAlignment = VerticalAlignment.Center;
+        var name = Text(cat.name, size: 14, weight: FontWeight.SemiBold); name.TextWrapping = TextWrapping.NoWrap; name.TextTrimming = TextTrimming.CharacterEllipsis;
+        var words = Stack(3, name, Muted(Categories.Of(cat.id))); words.VerticalAlignment = VerticalAlignment.Center;
+        var line = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), Margin = new Thickness(0, 10) };
+        line.Children.Add(ItemIcon(cat.id)); Grid.SetColumn(words, 1); line.Children.Add(words); Grid.SetColumn(add, 2); line.Children.Add(add);
+        return new Border { Child = line, BorderThickness = new Thickness(0, 0, 0, 1) }.Themed(Border.BorderBrushProperty, ThemeTokens.Border);
     }
 
     // ---------------------------------------------------------------- sorting the list
 
-    readonly List<(Button button, string key, string label)> _sortButtons = new();
-
-    /// <summary>
-    /// Column headers over the list, lined up with each row: ✓ (on the card), Name, Qty, Price. A click sorts by that
-    /// column (▲), the next click reverses it (▼), the third goes back to the order the items were found in.
-    /// </summary>
-    Control SortHeaders()
-    {
-        Button Head(string key, string label, string tip, HorizontalAlignment align)
-        {
-            var b = new Button { Content = label, Padding = new Thickness(4, 1), FontSize = 12, HorizontalAlignment = align, Background = Brushes.Transparent, BorderThickness = new Thickness(0) };
-            ToolTip.SetTip(b, tip);
-            b.Click += (_, _) =>
-            {
-                if (S.ListSort != key) { S.ListSort = key; S.ListSortDown = false; }
-                else if (!S.ListSortDown) S.ListSortDown = true;
-                else { S.ListSort = ""; S.ListSortDown = false; }
-                ShowSort(); RefreshList(); _engine.SettingsChanged();
-            };
-            _sortButtons.Add((b, key, label));
-            return b;
-        }
-        // same columns as a row: tick, icon, name, price % (8 + 80 + 4 + 50), qty (70 + 8), price (96 + 6), chevron
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("30,52,*,142,64,92,28"), Margin = new Thickness(18, 8, 10, 0) };
-        var adjustHead = new TextBlock { Text = "Price %", FontSize = 12, Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center }
-            .Themed(TextBlock.ForegroundProperty, ThemeTokens.TextMuted);
-        ToolTip.SetTip(adjustHead, "Each item's own price adjustment on the card, on top of its kind's (Kinds of item on the card) and the card's slider");
-        var cells = new (Control c, int col, int span)[]
-        {
-            (Head("on", "✓", "Sort by whether the item is on the card", HorizontalAlignment.Left), 0, 1),
-            (Head("name", "Name", "Sort by name", HorizontalAlignment.Left), 1, 2),
-            (adjustHead, 3, 1),
-            (Head("qty", "Qty", "Sort by quantity", HorizontalAlignment.Left), 4, 1),
-            (Head("price", "Price", "Sort by price: the one you typed, else the going rate; Offer last", HorizontalAlignment.Left), 5, 1),
-        };
-        foreach (var (c, col, span) in cells) { Grid.SetColumn(c, col); Grid.SetColumnSpan(c, span); grid.Children.Add(c); }
-        foreach (var (b, _, _) in _sortButtons) b.Themed(TemplatedControl.ForegroundProperty, ThemeTokens.TextMuted);
-        ShowSort();
-        return grid;
-    }
-
-    void ShowSort()
-    {
-        foreach (var (b, key, label) in _sortButtons)
-        {
-            bool on = S.ListSort == key;
-            b.Content = on ? $"{label} {(S.ListSortDown ? "▼" : "▲")}" : label;
-            b.FontWeight = on ? FontWeight.Bold : FontWeight.Normal;
-        }
-    }
-
     /// <summary>The list in the chosen column order; ties (and no sort) keep the order the items were found in.</summary>
-    IEnumerable<SaleItem> Sorted(IEnumerable<SaleItem> items)
+    IEnumerable<SaleItem> Sorted(IEnumerable<SaleItem> items, bool buying = false)
     {
         var list = items.ToList();
+        string sort = buying ? S.BuySort : S.ListSort;
+        bool down = buying ? S.BuySortDown : S.ListSortDown;
         static long Price(SaleItem i) => (!string.IsNullOrWhiteSpace(i.Custom) ? Mesos.Parse(i.Custom) : i.RateValue) ?? -1;
-        IOrderedEnumerable<SaleItem>? o = S.ListSort switch
+        IOrderedEnumerable<SaleItem>? o = sort switch
         {
-            "on" => S.ListSortDown ? list.OrderBy(i => i.Include) : list.OrderByDescending(i => i.Include),
-            "name" => S.ListSortDown ? list.OrderByDescending(i => i.Name, StringComparer.OrdinalIgnoreCase) : list.OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase),
-            "qty" => S.ListSortDown ? list.OrderByDescending(i => i.Pieces ?? 0) : list.OrderBy(i => i.Pieces ?? 0),
+            "on" => down ? list.OrderBy(i => i.Include) : list.OrderByDescending(i => i.Include),
+            "name" => down ? list.OrderByDescending(i => i.Name, StringComparer.OrdinalIgnoreCase) : list.OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase),
+            "qty" => down ? list.OrderByDescending(i => i.Pieces ?? 0) : list.OrderBy(i => i.Pieces ?? 0),
             // Offer (no price) always last, both ways
-            "price" => S.ListSortDown ? list.OrderBy(i => Price(i) < 0).ThenByDescending(Price) : list.OrderBy(i => Price(i) < 0).ThenBy(Price),
+            "price" => down ? list.OrderBy(i => Price(i) < 0).ThenByDescending(Price) : list.OrderBy(i => Price(i) < 0).ThenBy(Price),
             _ => null,
         };
         return o ?? (IEnumerable<SaleItem>)list;
     }
 
-    bool Shows(SaleItem it)
+    void RefreshList(bool force = false)
     {
-        var q = (S.Search ?? "").Trim();
-        if (q.Length > 0 && !it.Name.Contains(q, StringComparison.OrdinalIgnoreCase)) return false;
-        if (!SaleCardEngine.InTab(it, S.Tab)) return false;
-        return S.Show switch
-        {
-            "" or ShowAll => true,
-            ShowOn => it.Include,
-            ShowOff => !it.Include,
-            SaleCardEngine.PlaceStorage => it.Tab == SaleCardEngine.StorageTab,
-            SaleCardEngine.PlaceBag => SaleCardEngine.PlaceOf(it) == SaleCardEngine.PlaceBag,
-            SaleCardEngine.PlaceShop => it.Tab == SaleCardEngine.ShopTab,
-            var cat => it.Category == cat,
-        };
+        var available = Sorted(_engine.Items.Where(i => CardSelection.Available(i, S.Search, S.SellSource, S.SellType))).ToList();
+        var allSelected = Sorted(_engine.Items.Where(i => !i.IsWanted && i.Include)).ToList();
+        int missing = allSelected.Count(i => i.MissingStats);
+        _missingStats.IsVisible = missing > 0 || _missingOnly;
+        _missingStats.Content = _missingOnly ? $"Missing stats · {missing} — Show all" : $"Missing stats · {missing} — Review items";
+        var selected = allSelected.Where(i => CardSelection.Selected(i, false, S.CardSearch, S.CardSource, S.CardType) && (!_missingOnly || i.MissingStats)).ToList();
+        Replace(_shown, available);
+        if (force || !_selectedList.IsKeyboardFocusWithin || selected.SequenceEqual(_selected))
+        { Replace(_selected, selected); _listDirty = false; }
+        else _listDirty = true;
+        _selectedTitle.Text = $"On your card · {allSelected.Count}";
+        _selectedEmpty.Text = _missingOnly && missing == 0 ? "All selected items have recorded stats." : allSelected.Count > 0 && selected.Count == 0 ? "No selected items match these filters." : "Sync or use + Add to put items on your card.";
+        _selectionHidden.IsVisible = S.HideSelling;
+        _loading = true; _sellingOn.IsChecked = !S.HideSelling; _loading = false;
+        _selectedEmpty.IsVisible = selected.Count == 0;
+        _empty.IsVisible = available.Count == 0;
+        _empty.Text = _engine.Items.Any(i => !i.IsWanted)
+            ? "No available items match these filters. Items already on your card are shown on the right."
+            : "Open your inventory, storage or shop in game, then Sync. Or use + Add item.";
     }
 
-    void RefreshList()
+    static void Replace(ObservableCollection<SaleItem> target, List<SaleItem> items)
     {
-        _shopNote.IsVisible = S.Tab == SaleCardEngine.ShopTab || S.Show == SaleCardEngine.PlaceShop;
-        var want = Sorted(_engine.Items.Where(Shows)).ToList();
-        if (!want.SequenceEqual(_shown))
-        {
-            if (_list.IsKeyboardFocusWithin) { _listDirty = true; return; }
-            _shown.Clear();
-            foreach (var i in want) _shown.Add(i);
-        }
-        _listDirty = false;
-        _empty.IsVisible = _shown.Count == 0;
-        int inTab = _engine.Items.Count(i => SaleCardEngine.InTab(i, S.Tab));
-        _empty.Text = inTab > 0 ? "No items here match the search or the Show filter."
-            : S.Tab.Length == 0 ? "Open your inventory, storage or your own Free Market shop in game"
-            : S.Tab == SaleCardEngine.ShopTab ? "Open your own Free Market shop in game.\nVisible, recognized listings are saved here; scroll to read more."
-            : S.Tab == SaleCardEngine.StorageTab ? "Nothing from storage yet.\nTalk to a storage keeper NPC in town and open your storage in game."
-            : $"Open the {S.Tab} tab in game";
-    }
-
-    void RebuildTabs()
-    {
-        _tabs.Children.Clear();
-        foreach (var name in new[] { "" }.Concat(Vision.TabNames).Append(SaleCardEngine.StorageTab).Append(SaleCardEngine.ShopTab))
-        {
-            int count = _engine.Items.Count(i => SaleCardEngine.InTab(i, name));
-            var b = new ToggleButton { Content = $"{(name.Length == 0 ? "All" : name)} ({count})", IsChecked = S.Tab == name, Margin = new Thickness(0, 0, 4, 4) };
-            if (count == 0 && name.Length > 0)
-            {
-                b.Opacity = 0.6;
-                ToolTip.SetTip(b, name == SaleCardEngine.ShopTab ? "Open your own Free Market shop; scroll its list to capture more listings" : name == SaleCardEngine.StorageTab ? "Talk to a storage keeper NPC in town and open your storage in game" : $"Open the {name} tab in game");
-            }
-            b.Click += (_, _) => { S.Tab = name; RebuildTabs(); RefreshList(); _engine.SettingsChanged(); };
-            _tabs.Children.Add(b);
-        }
+        if (items.SequenceEqual(target)) return;
+        target.Clear(); foreach (var item in items) target.Add(item);
     }
 
     /// <summary>
@@ -634,46 +710,19 @@ internal sealed class SaleCardPanel : UserControl
         }
     }
 
-    /// <summary>One checkbox per kind of item present (and inventory / storage): untick to take that whole group off the card.</summary>
     void RebuildFilters()
     {
-        var items = _engine.Items.Where(i => i.Tab != SaleCardEngine.BuyTab).ToList();   // selling items: what you buy has its own tab
-        var groups = Categories.Order.Where(c => items.Any(i => i.Category == c)).ToList();
-        _kinds.Children.Clear();
-        void Group(string label, List<SaleItem> members, Action<bool> set, bool place)
-        {
-            int on = members.Count(i => i.Include);
-            var box = new CheckBox { Content = $"{label} ({on}/{members.Count})", IsChecked = on == members.Count ? true : on == 0 ? false : null, Margin = new Thickness(0, 0, 16, 4) };
-            if (place) box.FontWeight = FontWeight.SemiBold;
-            ToolTip.SetTip(box, $"Tick to put all {label} on the card, untick to remove them all");
-            box.Click += (_, _) => set(box.IsChecked == true);
-            _kinds.Children.Add(box);
-        }
-        foreach (var c in groups)
-        {
-            var members = items.Where(i => i.Category == c).ToList();
-            Group(c, members, v => _engine.SetGroup(c, v, members), false);
-        }
-        var places = new[] { SaleCardEngine.PlaceBag, SaleCardEngine.PlaceStorage, SaleCardEngine.PlaceShop };
-        foreach (var place in places)
-        {
-            var members = items.Where(i => SaleCardEngine.PlaceOf(i) == place).ToList();
-            if (members.Count > 0) Group(place, members, v => _engine.SetGroup(place, v, members), true);
-        }
-        if (groups.Count == 0) _kinds.Children.Add(Muted("read a tab to see the kinds of item"));
+        var groups = Categories.Order.Where(c => _engine.Items.Any(i => !i.IsWanted && i.Category == c)).ToList();
         RebuildKindPrices(groups);
-
-        var options = new List<string> { ShowAll, ShowOn, ShowOff };
-        options.AddRange(places);
-        options.AddRange(groups);
-        if (!options.SequenceEqual(_show.Items.Cast<string>()))
+        var options = new[] { "All types" }.Concat(Categories.Order).ToList();
+        _loading = true;
+        try
         {
-            _loading = true;
-            _show.Items.Clear();
-            foreach (var o in options) _show.Items.Add(o);
-            _show.SelectedItem = options.Contains(S.Show) ? S.Show : ShowAll;
-            _loading = false;
+            if (!_type.Items.Cast<string>().SequenceEqual(options)) _type.ItemsSource = options;
+            _type.SelectedItem = options.Contains(S.SellType) ? S.SellType : "All types";
+            _source.SelectedItem = _source.Items.Cast<string>().Contains(S.SellSource) ? S.SellSource : "All sources";
         }
+        finally { _loading = false; }
     }
 
     // ---------------------------------------------------------------- panels
@@ -730,6 +779,7 @@ internal sealed class SaleCardPanel : UserControl
                        Stack(4, Muted("Order"), Choice(SaleCardEngine.Orders, () => S.Order, v => S.Order = v,
                            "The order of the tiles. By type keeps each kind together (weapons, armor, accessories, potions, scrolls, gems and ores…), related items side by side.")));
 
+        var pricing = new Expander { Header = "Price adjustments by item type", Content = _kindPrices };
         var tagColours = Stack(4,
             Muted("Tag colours"),
             ColourRow("SALE", () => S.SaleTagColour, v => S.SaleTagColour = v),
@@ -796,7 +846,7 @@ internal sealed class SaleCardPanel : UserControl
             Muted("Location"), Field(_location, v => S.Location = v), _locationNote,
             Muted("Card title"), Field(_title, v => S.Title = v),
             Wrap(manual, portrait),
-            Head("Look"), look,
+            Head("Look"), look, pricing,
             Head("Show on the card"), show,
             Head("Map"), map,
             Head("Footer"), footer));
@@ -934,6 +984,7 @@ internal sealed class SaleCardPanel : UserControl
 
     void LoadFromSession()
     {
+        UpdateColumnHeaders();
         _kindPricesFor = "\0";   // settings (re)loaded: the kind sliders are built again with their saved values
         _loading = true;
         try
@@ -945,8 +996,9 @@ internal sealed class SaleCardPanel : UserControl
             _location.Text = S.Location; _title.Text = S.Title;
             foreach (var (box, get) in _checks) box.IsChecked = get();
             foreach (var load in _loaders) load();
-            ShowSort();
+
             _buySearch.Text = S.BuySearch ?? "";
+            _buyType.SelectedItem = S.BuyType;
             _sellingOn.IsChecked = !S.HideSelling; _buyingOn.IsChecked = !S.HideBuying;
         }
         finally { _loading = false; }
@@ -982,7 +1034,6 @@ internal sealed class SaleCardPanel : UserControl
         _browserStatus.Text = S.BrowserTabs ? _engine.BrowserStatus : "";
         SyncFields();
         UpdateHeader();
-        RebuildTabs();
         RebuildFilters();
         RefreshList();
         RefreshBuying();
@@ -990,7 +1041,64 @@ internal sealed class SaleCardPanel : UserControl
 
     // ---------------------------------------------------------------- card
 
-    void QueueRender() { _render.Stop(); _render.Start(); }
+    readonly Grid _previewContent = new() { ColumnDefinitions = new ColumnDefinitions("*,0,0") };
+    readonly StackPanel _liveEditor = new() { Spacing = 8, Focusable = true };
+    readonly ScrollViewer _liveEditorScroll = new() { IsVisible = false, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+    List<SaleItem> _editing = new();
+
+    void LayoutCardEditor()
+    {
+        bool narrow = _liveEditorScroll.IsVisible && _previewContent.Bounds.Width < 720;
+        string columns = !_liveEditorScroll.IsVisible || narrow ? "*,0,0" : "3*,16,2*";
+        string rows = narrow ? "230,12,*" : "*";
+        if (_previewContent.ColumnDefinitions.ToString() != columns) _previewContent.ColumnDefinitions = new ColumnDefinitions(columns);
+        if (_previewContent.RowDefinitions.ToString() != rows) _previewContent.RowDefinitions = new RowDefinitions(rows);
+        Grid.SetColumn(_liveEditorScroll, narrow ? 0 : 2); Grid.SetRow(_liveEditorScroll, narrow ? 2 : 0);
+    }
+
+    void RefreshCardEditor()
+    {
+        if (!_liveEditorScroll.IsVisible || (_liveEditor.IsKeyboardFocusWithin && !_liveEditor.IsFocused)) return;
+        var items = _engine.EditableCardItems();
+        if (items.SequenceEqual(_editing) && _liveEditor.Children.Count > 0) return;
+        _editing = items;
+        _liveEditor.Children.Clear();
+        _liveEditor.Children.Add(Muted("Edits save to the same items as your lists. Arrows select Manual order: individual entries, no grouping or column packing. Selling stays before Buying."));
+        if (items.Count == 0) _liveEditor.Children.Add(Muted("No visible items on the card. Add items or enable Selling / Buying."));
+        foreach (var item in items)
+        {
+            Control Field(string property, string label)
+            {
+                var box = new TextBox { Watermark = label, [!TextBox.TextProperty] = new Binding(property) { Mode = BindingMode.TwoWay } };
+                return Stack(2, Muted(label), box);
+            }
+            void Move(int direction) { _engine.MoveCardItem(item, direction); LoadFromSession(); _liveEditor.Focus(); RefreshCardEditor(); }
+            var up = Button("↑", () => Move(-1)); var down = Button("↓", () => Move(1));
+            int index = items.IndexOf(item);
+            up.IsEnabled = index > 0 && items[index - 1].IsWanted == item.IsWanted;
+            down.IsEnabled = index + 1 < items.Count && items[index + 1].IsWanted == item.IsWanted;
+            ToolTip.SetTip(up, "Move this item earlier on the card"); ToolTip.SetTip(down, "Move this item later on the card");
+            var remove = Button("Remove", () =>
+            {
+                if (item.IsWanted && _engine.Vision?.Catalog.TryGetValue(item.ItemId, out var cat) == true) _engine.SetBuying(cat, false);
+                else item.Include = false;
+                _liveEditor.Focus(); RefreshCardEditor();
+            });
+            var fields = Stack(5, Muted(item.IsWanted ? "Buying" : "Selling"), Field(nameof(SaleItem.Name), "Item name"),
+                Field(nameof(SaleItem.Qty), "Quantity"), Field(nameof(SaleItem.Custom), "Base price (blank = going rate)"),
+                Field(nameof(SaleItem.Stats), item.IsWanted ? "Wanted stats" : "Stats"), Field(nameof(SaleItem.Slots), "Slots"),
+                new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { up, down, remove } });
+            fields.DataContext = item;
+            _liveEditor.Children.Add(Card(fields, 10));
+        }
+    }
+
+    void QueueRender()
+    {
+        _render.Stop();
+        if (TopLevel.GetTopLevel(this) == null) return;
+        RefreshList(); RefreshBuying(); RefreshCardEditor(); _render.Start();
+    }
 
     MapCropper? _cropper;
     bool _maximized;
@@ -1005,12 +1113,12 @@ internal sealed class SaleCardPanel : UserControl
     {
         _maximized = !_maximized;
         _sections.IsVisible = !_maximized;
-        Grid.SetColumn(_previewBox, _maximized ? 0 : 2);
-        Grid.SetColumnSpan(_previewBox, _maximized ? 3 : 1);
-        _previewBox.Height = _maximized ? double.NaN : BodyHeight;
+        Grid.SetRow(_previewBox, _maximized ? 0 : 2);
+        Grid.SetRowSpan(_previewBox, _maximized ? 3 : 1);
+        _previewBox.Height = _maximized ? 720 : _liveEditorScroll.IsVisible ? 650 : 400;
         _preview.StretchDirection = _maximized ? StretchDirection.Both : StretchDirection.DownOnly;
         _maximize.Content = _maximized ? "⤡  Reduce" : "⛶  Maximize";
-        ToolTip.SetTip(_maximize, _maximized ? "Back to the lists beside the card (Esc)" : "Shows the card across the whole page, as large as it fits. Press Reduce (or Esc) to bring the lists back.");
+        ToolTip.SetTip(_maximize, _maximized ? "Back to the lists above the card (Esc)" : "Shows the card across the whole page, as large as it fits. Press Reduce (or Esc) to bring the lists back.");
         if (_maximized) { Focusable = true; Focus(); }
     }
 
@@ -1019,11 +1127,45 @@ internal sealed class SaleCardPanel : UserControl
         try
         {
             var (items, options) = _engine.Card();
+            var previous = _card;
             _card = CardRenderer.Render(items, options);
             _preview.Source = _card.Value.bitmap;
+            previous?.bitmap.Dispose();
             _cropper?.Refresh();   // the map may have refreshed, been trimmed or cropped
         }
         catch (Exception e) { _ctx.Log("card render failed: " + e); _status.Text = "Couldn't draw the card: " + e.Message; }
+    }
+
+    async Task ExportCsvAsync()
+    {
+        if (TopLevel.GetTopLevel(this) is not { } top) return;
+        var file = await top.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = "Export card item list (before card-wide discounts)", SuggestedFileName = "MapleLite-card.csv", DefaultExtension = "csv",
+            FileTypeChoices = [new FilePickerFileType("CSV") { Patterns = ["*.csv"] }],
+        });
+        if (file?.TryGetLocalPath() is not { } path) return;
+        try { await File.WriteAllTextAsync(path, CardCsv.Export(_engine.Items), new System.Text.UTF8Encoding(true)); _ctx.Notify("Exported card item list."); }
+        catch (Exception e) { _ctx.Notify("CSV export failed: " + e.Message); }
+    }
+
+    async Task ImportCsvAsync()
+    {
+        if (TopLevel.GetTopLevel(this) is not { } top) return;
+        var files = await top.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Merge CSV items into this card", AllowMultiple = false,
+            FileTypeFilter = [new FilePickerFileType("CSV") { Patterns = ["*.csv"] }],
+        });
+        if (files.FirstOrDefault()?.TryGetLocalPath() is not { } path) return;
+        try
+        {
+            if (new FileInfo(path).Length > 5_000_000) throw new FormatException("CSV exceeds 5 MB.");
+            var csv = await File.ReadAllTextAsync(path);
+            int count = _engine.ImportCsv(csv);
+            _ctx.Notify($"Imported {count} items. Existing scanned items were kept.");
+        }
+        catch (Exception e) { _ctx.Notify("CSV import failed: " + e.Message); }
     }
 
     async Task CopyAsync()
@@ -1081,6 +1223,24 @@ internal sealed class SaleCardPanel : UserControl
         if (frame == null || TopLevel.GetTopLevel(this) is not Window owner) return;
         var px = await SnipWindow.SelectAsync(owner, frame);
         if (px != null) { _engine.SetManualAvatar(px); LoadFromSession(); }
+    }
+
+    async Task AddItemAsync()
+    {
+        if (_engine.Vision is not { } vision || TopLevel.GetTopLevel(this) is not Window owner) return;
+        var pick = await ItemPickerWindow.ShowAsync(owner, "Add an item", "Search the item database. The item goes on your Selling list under Added by hand, where you set its quantity and price.",
+            vision.Catalog.Values, _engine.IconOf, allowCustom: true, start: S.Search ?? "");
+        if (pick == null) return;
+        _engine.AddByHand(pick.Item, pick.Name);
+        RefreshList(force: true); _engine.SettingsChanged();
+    }
+
+    async Task ChangeItemAsync(SaleItem item)
+    {
+        if (_engine.Vision is not { } vision || TopLevel.GetTopLevel(this) is not Window owner) return;
+        var pick = await ItemPickerWindow.ShowAsync(owner, "Change item", $"Pick what \"{item.Name}\" really is. Its quantity, price and stats stay.",
+            vision.Catalog.Values, _engine.IconOf, allowCustom: false);
+        if (pick?.Item is { } cat) { _engine.ChangeItem(item, cat); _selected.Clear(); RefreshList(force: true); }
     }
 
     async Task<bool> Confirm(string question, string[] clears, string[] keeps, string go)

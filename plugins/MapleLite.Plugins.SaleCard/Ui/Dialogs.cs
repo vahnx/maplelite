@@ -4,6 +4,7 @@ using Avalonia.Controls.Shapes;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using MapleLite.Core.Game;
 using MapleLite.Core.Imaging;
 using MapleLite.Sdk;
 using MapleLite.Sdk.Theming;
@@ -122,7 +123,7 @@ internal sealed class ConfirmWindow : Window
 {
     bool _go;
 
-    ConfirmWindow(string question, string[] clears, string[] keeps, string goLabel)
+    ConfirmWindow(string question, string[] clears, string[] keeps, string goLabel, string changesHeading = "This clears")
     {
         Title = "Shop Card";
         Width = 470; SizeToContent = SizeToContent.Height; CanResize = false;
@@ -137,7 +138,7 @@ internal sealed class ConfirmWindow : Window
             body.Children.Add(Text(head, token, 13, FontWeight.SemiBold));
             foreach (var i in items) body.Children.Add(Text("•  " + i));
         }
-        List("This clears", clears, ThemeTokens.Danger);
+        List(changesHeading, clears, ThemeTokens.Danger);
         List("This keeps", keeps, ThemeTokens.Text);
         var cancel = new Button { Content = "Cancel", IsCancel = true, IsDefault = true, MinWidth = 90 };
         cancel.Click += (_, _) => Close();
@@ -150,9 +151,9 @@ internal sealed class ConfirmWindow : Window
     }
 
     /// <summary>True only when the person pressed the go-ahead button.</summary>
-    public static async Task<bool> AskAsync(Window owner, string question, string[] clears, string[] keeps, string goLabel)
+    public static async Task<bool> AskAsync(Window owner, string question, string[] clears, string[] keeps, string goLabel, string changesHeading = "This clears")
     {
-        var w = new ConfirmWindow(question, clears, keeps, goLabel);
+        var w = new ConfirmWindow(question, clears, keeps, goLabel, changesHeading);
         await w.ShowDialog(owner);
         return w._go;
     }
@@ -168,5 +169,102 @@ internal sealed class FitWidth : Decorator
     {
         var s = base.MeasureOverride(availableSize);
         return double.IsInfinity(availableSize.Width) ? s : new Size(Math.Min(s.Width, availableSize.Width), s.Height);
+    }
+}
+
+/// <summary>
+/// Search the item database by name and pick one: for adding an item by hand, or for correcting one a scan named
+/// wrongly. Enter takes the top match; Escape cancels. With <c>allowCustom</c>, a name the database doesn't have can be
+/// added as it is.
+/// </summary>
+internal sealed class ItemPickerWindow : Window
+{
+    public sealed record Pick(CatalogItem? Item, string? Name);
+
+    const int Max = 80;
+    readonly IReadOnlyCollection<CatalogItem> _catalog;
+    readonly Func<int, IImage?> _icon;
+    readonly bool _allowCustom;
+    readonly TextBox _search = new() { Watermark = "Type part of the item's name" };
+    readonly StackPanel _rows = new() { Spacing = 2 };
+    readonly TextBlock _note = Muted("");
+    List<CatalogItem> _matches = new();
+    Pick? _result;
+
+    ItemPickerWindow(string title, string hint, IReadOnlyCollection<CatalogItem> catalog, Func<int, IImage?> icon, bool allowCustom, string start)
+    {
+        Title = title;
+        Width = 540; Height = 600; MinWidth = 380; MinHeight = 300;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        ShowInTaskbar = false;
+        this.Themed(BackgroundProperty, ThemeTokens.Surface);
+        (_catalog, _icon, _allowCustom) = (catalog, icon, allowCustom);
+        var head = Stack(6, Title(title), Muted(hint), _search, _note);
+        head.Margin = new Thickness(18, 14, 18, 8);
+        var cancel = new Button { Content = "Cancel", MinWidth = 90, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(18, 8, 18, 14) };
+        cancel.Click += (_, _) => Close();
+        var root = new DockPanel();
+        DockPanel.SetDock(head, Dock.Top);
+        DockPanel.SetDock(cancel, Dock.Bottom);
+        root.Children.Add(head);
+        root.Children.Add(cancel);
+        _rows.Margin = new Thickness(18, 0, 18, 0);
+        root.Children.Add(new ScrollViewer { Content = _rows, VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto });
+        Content = root;
+        _search.Text = start;
+        _search.TextChanged += (_, _) => Refresh();
+        _search.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter && _matches.Count > 0) { Choose(new Pick(_matches[0], null)); e.Handled = true; }
+        };
+        KeyDown += (_, e) => { if (e.Key == Key.Escape) Close(); };
+        Opened += (_, _) => { _search.Focus(); _search.SelectAll(); };
+        Refresh();
+    }
+
+    void Choose(Pick pick) { _result = pick; Close(); }
+
+    void Refresh()
+    {
+        var q = (_search.Text ?? "").Trim();
+        // words in any order: "dex earring 60" finds "Earring Dex Scroll 60%"
+        var words = q.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        _matches = words.Length == 0 ? new List<CatalogItem>()
+            : _catalog.Where(c => words.All(w => c.name.Contains(w, StringComparison.OrdinalIgnoreCase)))
+                .OrderBy(c => c.name.StartsWith(q, StringComparison.OrdinalIgnoreCase) ? 0 : c.name.Contains(q, StringComparison.OrdinalIgnoreCase) ? 1 : 2)
+                .ThenBy(c => c.name, StringComparer.OrdinalIgnoreCase).ToList();
+        _rows.Children.Clear();
+        foreach (var cat in _matches.Take(Max)) _rows.Children.Add(Row(cat));
+        if (_allowCustom && q.Length > 0 && !_matches.Any(c => c.name.Equals(q, StringComparison.OrdinalIgnoreCase)))
+        {
+            var custom = new Button { Content = $"Add \"{q}\" (not in the item database: no picture or going rate)", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 8, 0, 0) };
+            custom.Click += (_, _) => Choose(new Pick(null, q));
+            _rows.Children.Add(custom);
+        }
+        _note.Text = words.Length == 0 ? $"{_catalog.Count:N0} items in the database. Enter picks the top match."
+            : _matches.Count == 0 ? "No items match."
+            : _matches.Count > Max ? $"Showing {Max} of {_matches.Count} matches: type more to narrow it down."
+            : $"{_matches.Count} match{(_matches.Count == 1 ? "" : "es")}. Enter picks the top one.";
+    }
+
+    Control Row(CatalogItem cat)
+    {
+        var img = new Image { Width = 30, Height = 30, Source = _icon(cat.id) };
+        RenderOptions.SetBitmapInterpolationMode(img, Avalonia.Media.Imaging.BitmapInterpolationMode.None);
+        var tile = new Border { Width = 34, Height = 34, CornerRadius = new CornerRadius(5), Background = new SolidColorBrush(Color.Parse("#E1DFD5")), Margin = new Thickness(0, 0, 10, 0), Child = img };
+        var name = new TextBlock { Text = cat.name, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis }.Themed(TextBlock.ForegroundProperty, ThemeTokens.Text);
+        var kind = new TextBlock { Text = Categories.Of(cat.id), FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) }.Themed(TextBlock.ForegroundProperty, ThemeTokens.TextMuted);
+        var line = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+        foreach (var (c, i) in new Control[] { tile, name, kind }.Select((c, i) => (c, i))) { Grid.SetColumn(c, i); line.Children.Add(c); }
+        var b = new Button { Content = line, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, Background = Brushes.Transparent, Padding = new Thickness(4) };
+        b.Click += (_, _) => Choose(new Pick(cat, null));
+        return b;
+    }
+
+    public static async Task<Pick?> ShowAsync(Window owner, string title, string hint, IReadOnlyCollection<CatalogItem> catalog, Func<int, IImage?> icon, bool allowCustom, string start = "")
+    {
+        var w = new ItemPickerWindow(title, hint, catalog, icon, allowCustom, start);
+        await w.ShowDialog(owner);
+        return w._result;
     }
 }

@@ -17,6 +17,7 @@ internal sealed class MainWindow : Window
     readonly TextBlock _toast;
     readonly DispatcherTimer _toastTimer = new() { Interval = TimeSpan.FromSeconds(6) };
     readonly Dictionary<string, Control> _pages = new();
+    readonly List<CompanionWindow> _companions = new();
 
     /// <summary>A sidebar entry. Plugin pages are cached per plugin instance (PageKey), so a restarted plugin gets a new page.</summary>
     sealed record NavItem(string Title, string Key, PluginEntry? Plugin = null)
@@ -35,7 +36,13 @@ internal sealed class MainWindow : Window
 
         var brand = Ui.Stack(2,
             Ui.Text("MapleLite", ThemeTokens.Accent, 20, FontWeight.Bold),
-            Ui.Muted(""));
+            Ui.Button("Open companion panel", () =>
+            {
+                var panel = new CompanionWindow(_shell);
+                _companions.Add(panel);
+                panel.Closed += (_, _) => _companions.Remove(panel);
+                panel.Show();
+            }));
         brand.Margin = new Thickness(16, 18, 16, 14);
 
         _toast = Ui.Muted("");
@@ -58,6 +65,7 @@ internal sealed class MainWindow : Window
         shell.Notified += m => Dispatcher.UIThread.Post(() => { _toast.Text = m; _toastTimer.Stop(); _toastTimer.Start(); });
         shell.Plugins.Changed += () => Dispatcher.UIThread.Post(RefreshNav);
         RefreshNav();
+        Closed += (_, _) => { foreach (var panel in _companions.ToArray()) panel.Close(); };
     }
 
     /// <summary>Rebuilds the sidebar from the running plugins, keeping the current page when it still exists.</summary>
@@ -65,6 +73,11 @@ internal sealed class MainWindow : Window
     {
         var items = new List<NavItem> { new("Game", "game") };
         items.AddRange(_shell.Plugins.Entries.Where(p => p.Running).Select(p => new NavItem(p.Manifest.Name, "plugin:" + p.Manifest.Id, p)));
+        if (_shell.Settings.ShowMarketDatabase)
+        {
+            int shopCard = items.FindIndex(i => i.Key == "plugin:salecard");
+            items.Insert(shopCard >= 0 ? shopCard + 1 : items.Count, new("Market database", "market"));
+        }
         items.Add(new("Settings", "settings"));
         // forget pages of plugins that stopped or restarted
         var live = items.Select(i => i.PageKey).ToHashSet();
@@ -106,7 +119,8 @@ internal sealed class MainWindow : Window
             page = item.Key switch
             {
                 "game" => new GamePage(_shell),
-                "settings" => new SettingsPage(_shell),
+                "settings" => new SettingsPage(_shell, RefreshNav),
+                "market" => new MarketPage(),
                 _ => PluginPage.Create(item.Plugin!),
             };
             _pages[item.PageKey] = page;

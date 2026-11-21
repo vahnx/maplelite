@@ -10,5 +10,6 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="MapleLite.Tests" />
+    <InternalsVisibleTo Include="MapleLite.UiTests" />
   </ItemGroup>
 </Project>

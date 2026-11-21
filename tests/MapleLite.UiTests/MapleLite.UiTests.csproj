@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net8.0</TargetFramework><IsPackable>false</IsPackable></PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="Avalonia.Headless.XUnit" Version="11.3.21" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.21" />
+    <PackageReference Include="Avalonia.Skia" Version="11.3.21" />
+    <ProjectReference Include="../../plugins/MapleLite.Plugins.SaleCard/MapleLite.Plugins.SaleCard.csproj" />
+    <ProjectReference Include="../../plugins/MapleLite.Plugins.XpTracker/MapleLite.Plugins.XpTracker.csproj" />
+    <Compile Include="../../src/MapleLite.Host/Themes/ThemeService.cs" Link="ThemeService.cs" />
+    <None Include="../../src/MapleLite.Core/GameData/Items/**/*" LinkBase="GameData/Items" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

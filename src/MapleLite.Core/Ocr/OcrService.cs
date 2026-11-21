@@ -71,7 +71,7 @@ public sealed class OcrService : IOcr, IDisposable
     public OcrService(IOcrEngine? engine, int maxConcurrent = 0)
     {
         _engine = engine;
-        if (maxConcurrent <= 0) maxConcurrent = Math.Clamp(Environment.ProcessorCount / 2, 1, 4);
+        if (maxConcurrent <= 0) maxConcurrent = Math.Clamp(Environment.ProcessorCount / 2, 1, 2);
         _gate = new SemaphoreSlim(maxConcurrent, maxConcurrent);
     }
 

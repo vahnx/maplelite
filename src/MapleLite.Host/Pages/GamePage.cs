@@ -119,6 +119,8 @@ internal sealed class GamePage : UserControl
             _recTimer.Stop(); // recording itself carries on while other pages are open
             _shell.Capture.StatusChanged -= OnStatus;
             _sub?.Dispose(); _sub = null;
+            Interlocked.Exchange(ref _pending, null);
+            _preview.Source = null; _bitmap?.Dispose(); _bitmap = null;
         };
     }
 
@@ -171,6 +173,8 @@ internal sealed class GamePage : UserControl
         var f = gf.Frame;
         if (_bitmap == null || _bitmap.PixelSize.Width != f.W || _bitmap.PixelSize.Height != f.H)
         {
+            _preview.Source = null;
+            _bitmap?.Dispose();
             _bitmap = new WriteableBitmap(new PixelSize(f.W, f.H), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Opaque);
             _preview.Source = _bitmap;
         }

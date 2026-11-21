@@ -27,8 +27,7 @@ public interface IFrameSource
     /// <summary>
     /// Calls <paramref name="onFrame"/> with new frames, at most <paramref name="fps"/> times a second.
     /// The call runs on the capture thread: keep it short and hand slow work (OCR) to a task or queue.
-    /// While anyone subscribes the loop captures at the rate the user chose (<see cref="CaptureLoop.TargetFps"/>,
-    /// up to 60); each subscriber gets at most the rate it asks for.
+    /// The loop captures at the highest requested rate, capped by the user's <see cref="CaptureLoop.TargetFps"/>.
     /// Dispose the result to stop.
     /// </summary>
     IDisposable Subscribe(Action<GameFrame> onFrame, double fps);
@@ -56,7 +55,7 @@ public sealed class CaptureLoop : IFrameSource, IAsyncDisposable
 
     public GameTarget Target { get; set; } = new();
 
-    /// <summary>How many pictures a second to take while anyone is subscribed (5–60). The user picks it in Settings.</summary>
+    /// <summary>Maximum pictures a second (5–60). Actual capture follows subscriber demand.</summary>
     public double TargetFps { get => _targetFps; set => _targetFps = Math.Clamp(value, MinFps, MaxFps); }
     public CaptureStatus Status => _status;
     public GameFrame? Latest => _latest;
@@ -80,7 +79,7 @@ public sealed class CaptureLoop : IFrameSource, IAsyncDisposable
 
     double WantedFps()
     {
-        lock (_lock) return _subs.Count == 0 ? IdleFps : _targetFps;
+        lock (_lock) return _subs.Count == 0 ? IdleFps : Math.Min(_targetFps, _subs.Max(s => s.Fps));
     }
 
     public void Start()
@@ -99,9 +98,15 @@ public sealed class CaptureLoop : IFrameSource, IAsyncDisposable
         SetStatus(CaptureStatus.Stopped);
     }
 
+    long _lastStatusTicks;
     void SetStatus(CaptureStatus s)
     {
+        var previous = _status;
         _status = s;
+        long now = Stopwatch.GetTimestamp();
+        if (s.State == previous.State && s.Message == previous.Message && s.Window == previous.Window
+            && now - _lastStatusTicks < Stopwatch.Frequency) return;
+        _lastStatusTicks = now;
         try { StatusChanged?.Invoke(s); } catch { /* a bad listener must not stop capture */ }
     }
 

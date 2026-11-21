@@ -27,6 +27,10 @@ public sealed class SaleItem : INotifyPropertyChanged
     public IImage? Icon { get => _icon; set => Set(ref _icon, value); }
     public int SlotRow { get; set; } = -1;
     public int SlotCol { get; set; } = -1;
+    /// <summary>You picked this item yourself (added it by hand, or changed what a scan said): tooltips never rename it.</summary>
+    public bool Picked;
+    /// <summary>A card you added by hand from the item database: scans never touch or remove it.</summary>
+    public bool IsAdded => Tab == SaleCardEngine.AddedTab;
     public bool IsEquipment => ItemId / 1000000 == 1 || Tab == "Equip";
     /// <summary>A listing read from your own Free Market shop: it can be bought there right now.</summary>
     public bool InShop => Tab == SaleCardEngine.ShopTab;
@@ -43,11 +47,12 @@ public sealed class SaleItem : INotifyPropertyChanged
     int? WantedSlots => int.TryParse(Slots, out int n) && n >= 0 && n <= 99 ? n : null;
 
     string _stats = "", _slots = "", _rateNote = "";
-    public string Stats { get => _stats; set => Set(ref _stats, value, nameof(Stats), nameof(DetailsText)); }
-    public string Slots { get => _slots; set => Set(ref _slots, value, nameof(Slots), nameof(DetailsText)); }
+    public string Stats { get => _stats; set => Set(ref _stats, value, nameof(Stats), nameof(DetailsText), nameof(MissingStats)); }
+    public string Slots { get => _slots; set => Set(ref _slots, value, nameof(Slots), nameof(DetailsText), nameof(MissingStats)); }
     /// <summary>What the monitor last wrote from a tooltip; anything else in Stats/Slots was typed by the user.</summary>
     public string AutoStats = "", AutoSlots = "";
     public string RateNote { get => _rateNote; set => Set(ref _rateNote, value); }
+    public bool MissingStats => !IsWanted && (IsEquipment ? !HasDetails : IsScroll && string.IsNullOrWhiteSpace(Stats));
     public bool HasDetails => !string.IsNullOrWhiteSpace(Stats) && int.TryParse(Slots, out int n) && n >= 0 && n <= 99;
     public string DetailsText => IsWanted ? WantedText
         : IsEquipment

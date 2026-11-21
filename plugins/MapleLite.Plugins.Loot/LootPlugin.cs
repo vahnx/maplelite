@@ -14,7 +14,7 @@ namespace MapleLite.Plugins.Loot;
 /// Pickups come from two places: the game's pickup notices (read here) and pickup lines in chat
 /// (published by Chat History as ChatMessageEvents, when it's on). Moved out of Chat History.
 /// </summary>
-public sealed class LootPlugin : IPlugin
+public sealed class LootPlugin : IPlugin, ICompanionPanel
 {
     IPluginContext? _ctx;
     LootLog? _log;
@@ -90,6 +90,10 @@ public sealed class LootPlugin : IPlugin
         if (_reader != null) await _reader.StopAsync();
         if (_mesos != null) await _mesos.StopAsync();
     }
+
+    public Control CreateCompanionPanel() => CompanionPanel.Text(() =>
+        "Recent pickups · newest first\n\n" + (_log == null ? "Waiting for loot…" :
+        string.Join("\n", _log.Records.TakeLast(50).Reverse().Select(r => $"{r.Time.LocalDateTime:HH:mm:ss}  {r.Name} ×{r.Quantity:N0}"))));
 
     public Control? CreatePanel()
     {

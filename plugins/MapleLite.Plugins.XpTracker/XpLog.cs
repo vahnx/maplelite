@@ -22,6 +22,7 @@ public sealed class XpLog
     readonly object _write = new(); // one writer or reader of the files at a time
     readonly List<XpGain> _pending = new();
     List<XpGain>? _all;
+    long _revision;
 
     public XpLog(string folder)
     {
@@ -29,7 +30,9 @@ public sealed class XpLog
         DailyFiles.SplitMonthly(_folder, "", ".tsv", line => Parse(line)?.Time);
     }
 
-    public void Add(XpGain g) { lock (_lock) { _pending.Add(g); _all?.Add(g); } }
+    public long Revision { get { lock (_lock) return _revision; } }
+
+    public void Add(XpGain g) { lock (_lock) { _pending.Add(g); _all?.Add(g); _revision++; } }
 
     /// <summary>Writes gains not yet on disk.</summary>
     public void Flush()

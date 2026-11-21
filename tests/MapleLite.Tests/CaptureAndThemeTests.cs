@@ -33,6 +33,20 @@ sealed class FakePlatform : IPlatform, IGameWindowFinder, IWindowCapture, ICurso
 
 public class CaptureLoopTests
 {
+    [Fact]
+    public async Task Capture_follows_subscriber_demand_and_throttles_status_notifications()
+    {
+        await using var loop = new CaptureLoop(new FakePlatform()) { TargetFps = 60 };
+        int frames = 0, notifications = 0;
+        using var sub = loop.Subscribe(_ => Interlocked.Increment(ref frames), 5);
+        loop.StatusChanged += _ => Interlocked.Increment(ref notifications);
+        loop.Start();
+        await Task.Delay(1300);
+        await loop.StopAsync();
+        Assert.InRange(loop.Latest == null ? 0 : frames, 3, 9);
+        Assert.InRange(notifications, 2, 4);
+    }
+
     static async Task<CaptureStatus> WaitFor(CaptureLoop loop, Func<CaptureStatus, bool> done)
     {
         for (int i = 0; i < 100 && !done(loop.Status); i++) await Task.Delay(30);
