@@ -131,12 +131,7 @@ public static class Mesos
     static string Trim(double d) => d.ToString(d >= 100 ? "0" : d >= 10 ? "0.#" : "0.##", System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>A typed price as a number: "5,000", "31.4k", "1.2m", "2b". Null when it is not a plain amount.</summary>
-    public static long? Parse(string text)
-    {
-        var m = System.Text.RegularExpressions.Regex.Match(text.Trim(), @"^~?\s*(\d[\d,]*(?:\.\d+)?)\s*([kmb])?\s*(?:mesos?|ea(?:ch)?|obo)?\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        if (!m.Success || !double.TryParse(m.Groups[1].Value.Replace(",", ""), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double v)) return null;
-        return (long)Math.Round(v * (m.Groups[2].Value.ToLowerInvariant() switch { "k" => 1e3, "m" => 1e6, "b" => 1e9, _ => 1 }));
-    }
+    public static long? Parse(string text) => MapleLite.Core.Market.MesoAmount.Parse(text);
 }
 
 /// <summary>
@@ -162,14 +157,18 @@ public static class ItemLinks
 public sealed class PriceBook(string folder)
 {
     readonly string _file = Path.Combine(folder, DataFiles.PriceBook);
-    readonly Dictionary<int, string> _prices = Store.Load<Dictionary<int, string>>(Path.Combine(folder, DataFiles.PriceBook));
+    readonly Dictionary<string, string> _prices = Store.Load<Dictionary<string, string>>(Path.Combine(folder, DataFiles.PriceBook));
 
-    public string? Get(int itemId) => _prices.TryGetValue(itemId, out var p) ? p : null;
+    public string? Get(int itemId, string? profile = null) => _prices.GetValueOrDefault(Key(itemId, profile));
 
-    public void Set(int itemId, string price)
+    static string Key(int itemId, string? profile) => profile == null ? itemId.ToString() : $"{itemId}:{profile}";
+
+    public void Set(int itemId, string price, string? profile = null)
     {
         price = price.Trim();
-        if (price.Length == 0) _prices.Remove(itemId); else _prices[itemId] = price;
+        string key = Key(itemId, profile);
+        if (price.Length == 0 ? !_prices.Remove(key) : _prices.GetValueOrDefault(key) == price) return;
+        if (price.Length > 0) _prices[key] = price;
         Store.Write(_file, JsonSerializer.Serialize(_prices));
     }
 }

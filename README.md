@@ -26,7 +26,7 @@ reads game memory, captures packets, or sends input to the game, and neither can
 | `src/MapleLite.Platform.Mac` | macOS: window finding, ScreenCaptureKit capture, Apple Vision OCR, clipboard. Not yet run against the native client. |
 | `src/MapleLite.Platform.Linux` | Linux (milestone 5): X11/XComposite for the Wine/Proton window, Tesseract OCR. Stub today. |
 | `src/MapleLite.Host` | The Avalonia app: Game page, plugin pages, Settings, themes, plugin loader. |
-| `plugins/*` | Bundled plugins: Chat History (the MapleMemory app, ported), Loot, Shop Card, XP Tracker, Respawn Timer, Camera. |
+| `plugins/*` | Bundled plugins: Chat History (the MapleMemory app, ported), Loot, Shop Card, DPS Simulator, XP Tracker, Respawn Timer, Camera. |
 | `samples/HelloPlugin` | A minimal third-party plugin to copy. |
 | `tests/MapleLite.Tests` | xUnit tests on fake engines and synthetic frames (never the live game). |
 
@@ -238,14 +238,22 @@ Detected rewards without a label appear under **Unclassified rewards**. Earlier 
 ![Shop Card: available items and selected items, with the preview below](docs/screenshots/shop-card-builder.png)
 
 Use **Selling**, **Buying**, **Design** and **Settings** to switch pages. The card preview sits below the editor;
-**Maximize** opens a larger view. At narrow window widths the two item lists stack vertically.
+**Enlarge** makes the preview fill the Shop Card page. **Pop out** opens a live, maximized window on another
+display when available. Use **Fit width** to scroll a long card at a larger scale. Click a price on a tile
+to set its base price before discounts, or use **−** to take it off the card. For a merged tile, **−** removes
+all entries represented by that item. Prices are shared across copies of the same stackable item or
+equipment with matching recorded stats and remaining slots. The Market database indexes those saved asks.
 
-**Selling** separates **Available items** from **On your card**. Use **Sync inventory** to refresh visible inventory,
-storage or your own shop. Open each tab or scroll the game window to expose more items. Explicit **Sync inventory** adds recognized items visible in that scan directly to your card. Background scans
+**Selling** separates **Available items** from **On your card**. Use **Sync** to refresh visible inventory,
+storage or your own shop. Open each tab or scroll the game window to expose more items. Explicit **Sync** adds recognized items visible in that scan directly to your card. Background scans
 leave newly discovered items in Available items until you press **+ Add** or Sync. Search and the source/type filters only affect the available list;
 they never hide or remove your selected items. The **−** button returns an item to Available items without deleting it.
 Sync keeps manual and unseen items and existing prices; it reselects recognized visible items even if you previously removed them.
 Separate equipment copies are preserved by inventory slot, including copies with identical or unread stats.
+The **Equipped** source shows gear recorded in DPS Simulator. **×** dismisses an available entry.
+Use **Settings → Restore dismissed items** to let scanned entries come back. **Review prices** filters
+to entries with a missing price or a saved **⚑** flag. **Clear card** empties Selling and Buying while
+keeping item details, and CSV export suggests `MapleLite-card yyyy-MM-dd HH-ss.csv`.
 
 **+ Add item** searches the bundled database by words in any order, or lets you add an unlisted name without an icon.
 Manual entries go straight onto your card. Expand a selected row with **▾** for **Change item…**, stats, going-rate
@@ -266,7 +274,7 @@ The **Prices** slider above the preview adjusts the card's prices without changi
 item's **▾** panel has its own adjustment, and **Design → Price adjustments by item type** retains the category controls.
 The **Selling** and **Buying** switches beside the export actions show or hide each list on the exported card.
 
-Open your own Free Market shop in the game, then **Sync inventory** and choose **My FM shop** in the source filter.
+Open your own Free Market shop in the game, then **Sync** and choose **My FM shop** in the source filter.
 Press **+ Add** on the recognized listings you want to include. The reader checks for the owner's **Close Store** control; browsing another
 player's shop contributes market prices, not your sale items. Scroll the shop list to expose more rows.
 Unclear names or prices are skipped. Repeated reads do not add the same observed listing again.
@@ -277,6 +285,27 @@ their prices and stats, merging into the item's inventory card when there is one
 them listings again. If the shop closed while MapleLite wasn't watching, Settings → **Move shop listings back** does
 it by hand. Identical listings on separate scroll pages cannot always be told apart, and the selected source filter
 is remembered.
+
+## DPS Simulator
+
+Open the **DPS Simulator** plugin and use **Record hovered gear (5s)** for each piece of worn gear.
+In the game, open the Equipment window and hover the piece to expose its tooltip. MapleLite saves
+the result by gear slot and makes it available in Shop Card’s **Equipped** source. Review the recorded
+stats and correct any OCR errors using **Edit**. The game window must be visible to the capture service.
+
+Search the gear catalog, load the base stats from MapleClassic Wiki when available or enter a particular
+roll, then select **Preview swap**. Equip and preview columns compare estimated DPS, hit chance, damage
+per cast and time to defeat. Set your level, job, base AP, and skill and cast timing under **Combat inputs**.
+Known prices come from Shop Card and its local Market archive. Mark a specific preview copy as owned to
+exclude it from the estimate. **Capture current portrait** reads the in-game portrait, and **Choose preview
+image** displays a supplied outfit image alongside the preview’s gear icons.
+
+**Refresh from MapleClassic Wiki** caches the monster table locally. **Add or curate targets** lets you
+add newer monsters and override individual records. Refreshes preserve these overrides. Estimates use
+the ordinary weapon and spell equations plus Lucky Seven. Enter the element multiplier and cast timing
+for your skill and target. The estimate models continuous attacks against a single target.
+[Monster data from MapleClassic Wiki](https://mapleclassic.wiki/wiki/Monsters) ·
+[Combat formulas from NiaDB](https://meowdb.com/msclassic/guides/explaining-the-damage-formula)
 
 ## Camera
 

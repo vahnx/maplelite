@@ -21,6 +21,7 @@ public sealed class SaleCardEngine
 {
     public const string StorageTab = "Storage";
     public const string ShopTab = "My FM shop";
+    public const string EquippedTab = "Equipped";
     /// <summary>Cards for items you want to buy, picked from the item database on the Buying tab (Key "Buy:{id}").</summary>
     public const string BuyTab = "Buying";
     /// <summary>Items you're selling that you added by hand from the item database (Key "Added:…"). Scans never touch them.</summary>
@@ -90,6 +91,9 @@ public sealed class SaleCardEngine
 
     DispatcherTimer? _watch, _browserTimer;
     IDisposable? _frames;
+    IDisposable? _equipmentSubscription;
+    MarketLookup? _marketLookup;
+    EquippedLoadout? _equipped;
 
     public async Task StartAsync()
     {
@@ -97,6 +101,20 @@ public sealed class SaleCardEngine
         var items = _ctx.Items;
         Vision = await Task.Run(() => new Vision(items));
         LoadSession();
+        var storedLoadout = Path.Combine(_folder, "..", EquippedLoadout.PluginId, EquippedLoadout.FileName + ".json");
+        _equipped = _ctx.Events.Last<EquippedLoadout>();
+        if (_equipped == null && File.Exists(storedLoadout))
+        {
+            try { _equipped = JsonSerializer.Deserialize<EquippedLoadout>(File.ReadAllText(storedLoadout)); }
+            catch (Exception ex) when (ex is IOException or JsonException) { _ctx.Log(ex.Message); }
+        }
+        if (_equipped is { Items: not null, Character: not null }) LoadEquipped(_equipped);
+        else _equipped = null;
+        _equipmentSubscription = _ctx.Events.Subscribe<EquippedLoadout>(LoadEquipped);
+        _marketLookup = _ctx.Events.Last<MarketLookup>() ?? new MarketLookup();
+        _marketLookup.Find = QuoteGear;
+        _marketLookup.Owns = id => Items.Any(i => i.ItemId == id && !i.IsWanted && !i.IsAdded && !i.InShop);
+        _ctx.Events.Publish(_marketLookup);
         // Keep the host's capture loop running at least once a second while this plugin is on.
         _frames = _ctx.Frames.Subscribe(_ => { }, 1);
         _watch = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
@@ -116,10 +134,57 @@ public sealed class SaleCardEngine
 
     public Task StopAsync()
     {
+        _popout?.Close();
+        _equipmentSubscription?.Dispose();
+        if (_marketLookup != null)
+        {
+            _marketLookup.Find = null;
+            _marketLookup.Owns = null;
+            _marketLookup.Refresh();
+            _marketLookup = null;
+        }
         _watch?.Stop(); _browserTimer?.Stop();
         _frames?.Dispose();
         _fm.Save(); _site.Save(); SaveSession();
         return Task.CompletedTask;
+    }
+
+    internal void LoadEquipped(EquippedLoadout loadout)
+    {
+        if (Vision == null) return;
+        _equipped = loadout;
+        var wanted = loadout.Items.GroupBy(i => $"{EquippedTab}:{loadout.Character}:{i.Slot}:{i.ItemId}")
+            .ToDictionary(g => g.Key, g => g.Last());
+        foreach (var old in Items.Where(i => i.Tab == EquippedTab && !wanted.ContainsKey(i.Key)).ToList()) Remove(old);
+        foreach (var (key, gear) in wanted)
+        {
+            if (!Vision.Catalog.TryGetValue(gear.ItemId, out var cat)) continue;
+            var item = Items.FirstOrDefault(i => i.Key == key);
+            if (item != null)
+            {
+                item.Stats = gear.Stats;
+                item.Slots = gear.RemainingEnhancements;
+                continue;
+            }
+            item = new SaleItem { Key = key, Tab = EquippedTab, ItemId = gear.ItemId, Name = cat.name, Include = false,
+                Picked = true, Category = Categories.Of(cat.id), Stats = gear.Stats, Slots = gear.RemainingEnhancements,
+                Icon = Icon(gear.ItemId, null), Url = ItemLinks.Kerning(cat) };
+            ApplyRate(item);
+            Add(item);
+        }
+        SaveSession();
+        Changed?.Invoke();
+        _marketLookup?.Refresh();
+    }
+
+    MarketQuote? QuoteGear(int id, string stats, string slots)
+    {
+        string? profile = string.IsNullOrWhiteSpace(stats) || string.IsNullOrWhiteSpace(slots) ? null : EquipmentReader.Profile(stats, slots);
+        if (profile != null && _book.Get(id, profile) is { } saved && Mesos.Parse(saved) is > 0 and var price)
+            return new MarketQuote(price, "Saved price · matching stats");
+        var item = new SaleItem { ItemId = id, Stats = stats, Slots = slots, Tab = EquippedTab };
+        ApplyRate(item);
+        return item.RateValue is long rate ? new MarketQuote(rate, item.Rate) : null;
     }
 
     public bool Monitoring => _watch?.IsEnabled == true;
@@ -183,6 +248,7 @@ public sealed class SaleCardEngine
             // checked items first by default; a sort you pick afterwards (even back to the order found) is kept
             if (!S.ListSortDefaulted) { if (S.ListSort.Length == 0) { S.ListSort = "on"; S.ListSortDown = false; } S.ListSortDefaulted = true; }
             S.ShopSold ??= new(); S.KindPercent ??= new(); S.Renames ??= new(); S.ShopRenames ??= new(); S.ManualOrder ??= new();
+            S.DismissedItems ??= new();
             // Lists saved before this was remembered: what is there came from the game, so keep following it.
             S.AutoLocation ??= S.Location;
             S.AutoIgn ??= S.Seller;
@@ -199,7 +265,7 @@ public sealed class SaleCardEngine
                 {
                     Key = s.Key, ItemId = s.ItemId, Tab = s.Tab, Category = Categories.Of(s.ItemId), Stacks = s.Stacks,
                     Name = s.Name, Qty = s.Qty, Include = s.Include, Custom = s.Custom, Stats = s.Stats, Slots = s.Slots, SlotRow = s.SlotRow, SlotCol = s.SlotCol,
-                    AutoStats = s.AutoStats, AutoSlots = s.AutoSlots, IconPx = iconPx, Buying = s.Buying, PricePercent = s.PricePercent, Picked = s.Picked,
+                    AutoStats = s.AutoStats, AutoSlots = s.AutoSlots, IconPx = iconPx, Buying = s.Buying, PricePercent = s.PricePercent, Picked = s.Picked, PriceFlagged = s.PriceFlagged,
                 };
                 if (_notForSale.Has(item.Ident)) continue;
                 item.Icon = Icon(s.ItemId, iconPx);
@@ -217,7 +283,7 @@ public sealed class SaleCardEngine
             // what the saved cards know goes into the memory; cards saved without stats are filled from it
             foreach (var i in Items.Where(i => i.IsEquipment && !i.IsWanted && !string.IsNullOrWhiteSpace(i.Stats))) _hover.Set(i.ItemId, i.Key, i.Stats, i.Slots);
             foreach (var i in Items.ToList()) Recall(i);
-            if (!(S.Tab.Length == 0 || Vision.TabNames.Contains(S.Tab) || S.Tab == StorageTab || S.Tab == ShopTab || S.Tab == AddedTab)) S.Tab = "";
+            if (!(S.Tab.Length == 0 || Vision.TabNames.Contains(S.Tab) || S.Tab == StorageTab || S.Tab == ShopTab || S.Tab == AddedTab || S.Tab == EquippedTab)) S.Tab = "";
         }
         catch { Store.Failed(SessionFile); S = new(); /* starting empty, with the unreadable file kept aside */ }
         finally { _bulk = false; }
@@ -237,14 +303,19 @@ public sealed class SaleCardEngine
             {
                 Key = i.Key, ItemId = i.ItemId, Tab = i.Tab, Name = i.Name, Qty = i.Qty, Include = i.Include, Custom = i.Custom,
                 Stats = i.Stats, Slots = i.Slots, SlotRow = i.SlotRow, SlotCol = i.SlotCol, AutoStats = i.AutoStats, AutoSlots = i.AutoSlots, Stacks = i.Stacks,
-                Icon = Session.Base64(i.IconPx), Buying = i.Buying, PricePercent = i.PricePercent, Picked = i.Picked,
+                Icon = Session.Base64(i.IconPx), Buying = i.Buying, PricePercent = i.PricePercent, Picked = i.Picked, PriceFlagged = i.PriceFlagged,
             }).ToList();
             Store.Write(SessionFile, JsonSerializer.Serialize(S));
         }
         catch { /* a failed save must never interrupt the plugin */ }
     }
 
-    void Add(SaleItem item) { item.PropertyChanged += OnItemChanged; Items.Add(item); }
+    void Add(SaleItem item)
+    {
+        if (IsDismissed(item)) return;
+        item.PropertyChanged += OnItemChanged;
+        Items.Add(item);
+    }
     void Remove(SaleItem item) { item.PropertyChanged -= OnItemChanged; Items.Remove(item); }
 
     void OnItemChanged(object? sender, PropertyChangedEventArgs e)
@@ -267,7 +338,12 @@ public sealed class SaleCardEngine
     DispatcherTimer? _saveTimer;
     void QueueSave()
     {
-        _saveTimer ??= new DispatcherTimer(TimeSpan.FromMilliseconds(400), DispatcherPriority.Background, (_, _) => { _saveTimer!.Stop(); SaveSession(); });
+        _saveTimer ??= new DispatcherTimer(TimeSpan.FromMilliseconds(400), DispatcherPriority.Background, (_, _) =>
+        {
+            _saveTimer!.Stop();
+            SaveSession();
+            _marketLookup?.Refresh();
+        });
         _saveTimer.Stop(); _saveTimer.Start();
     }
 
@@ -404,7 +480,14 @@ public sealed class SaleCardEngine
         var ign = S.Seller.Trim();
         if (ign.Length < 3) return;
         bool held = _avatarFor == ign, best = held && _avatarClean;
-        var found = await AvatarReader.ReadAsync(_ctx.Ocr, frame, ign, !cheap ? -1 : best ? 0 : _avatarLook);
+        (int[] px, bool clean)? storagePortrait = null;
+        if (Vision.LocateStorage(frame) is { } storage)
+        {
+            int x = storage.GridX + 211, y = storage.GridY - 124;
+            if (x >= 0 && y >= 0 && x + AvatarReader.W <= frame.W && y + AvatarReader.H <= frame.H)
+                storagePortrait = (AvatarReader.Crop(frame, x, y), true);
+        }
+        var found = storagePortrait ?? await AvatarReader.ReadAsync(_ctx.Ocr, frame, ign, !cheap ? -1 : best ? 0 : _avatarLook);
         if (found == null) { if (cheap && !best) _avatarLook = (_avatarLook + 1) % 4; return; }
         var (px, clean) = found.Value;
         if (clean)
@@ -502,7 +585,7 @@ public sealed class SaleCardEngine
     internal int IncludeSyncedItems(IEnumerable<string> keys)
     {
         var seen = keys.ToHashSet(StringComparer.Ordinal);
-        var items = Items.Where(i => seen.Contains(i.Key) && i.ItemId != 0 && !i.IsWanted && !i.IsAdded).ToList();
+        var items = Items.Where(i => seen.Contains(i.Key) && i.ItemId != 0 && !i.IsWanted && !i.IsAdded && i.Tab != EquippedTab).ToList();
         int added = items.Count(i => !i.Include);
         foreach (var item in items) item.Include = true;
         if (items.Count > 0) S.HideSelling = false;
@@ -941,6 +1024,7 @@ public sealed class SaleCardEngine
         var inView = cards.Select(c => c.key).ToHashSet();
         foreach (var (key, s, stacks) in cards)
         {
+            if (S.DismissedItems.Contains(key)) continue;
             bool carryInclude = true, carryState = false;
             string carryCustom = "", carryStats = "", carrySlots = ""; int carryPercent = 100;
             void Carry(SaleItem stale)
@@ -1162,6 +1246,9 @@ public sealed class SaleCardEngine
     /// <summary>A card's going rate: the average of every ticked source that has a price for the item.</summary>
     public void ApplyRate(SaleItem item)
     {
+        if (!item.IsWanted && !item.Buying && item.IsEquipment && item.HasDetails && string.IsNullOrWhiteSpace(item.Custom)
+            && _book.Get(item.ItemId, EquipmentReader.Profile(item.Stats, item.Slots)) is { } saved)
+            item.Custom = saved;
         var parts = new List<(string label, long price)>();
         bool exactFm = false; int seen = 0;
         if (!S.NoFm)
@@ -1417,6 +1504,7 @@ public sealed class SaleCardEngine
             int copy = occurrences.GetValueOrDefault(identity);
             occurrences[identity] = copy + 1;
             var key = $"{ShopTab}:{identity}:{copy}";
+            if (S.DismissedItems.Contains(key)) continue;
             _syncObserved?.Add(key);
             // a listing moved back to the inventory when the shop looked closed, seen in the open shop again: it's a listing again
             if (Items.FirstOrDefault(i => i.Key == ReturnedPrefix + key) is { } back) { back.Key = key; back.Tab = ShopTab; back.SlotRow = back.SlotCol = -1; added++; continue; }
@@ -1580,6 +1668,7 @@ public sealed class SaleCardEngine
             {
                 var t = item.CardCopy();
                 t.Qty = qty; t.Stacks = stacks; t.Custom = custom; t.PricePercent = percent;
+                t.MergedItems = group;
                 return t;
             }
             if (full > 0) result.Add(Tile(full > 1 ? $"{max} ×{full}" : $"{max}", (int)full));
@@ -1703,6 +1792,7 @@ public sealed class SaleCardEngine
             ApplyRate(card);
             Add(card);
         }
+        else if (on && card != null && !card.Include) card.Include = true;
         else if (!on && card != null) Remove(card);
         else return;
         SaveSession();
@@ -1766,6 +1856,73 @@ public sealed class SaleCardEngine
         Say($"Removed {item.Name}.");
         SaveSession();
         Changed?.Invoke();
+    }
+
+    bool IsDismissed(SaleItem item) => !item.IsWanted && !item.IsAdded && S.DismissedItems.Contains(item.Key);
+
+    public void DismissAvailable(SaleItem item)
+    {
+        if (item.Include || item.IsWanted || !Items.Contains(item)) return;
+        if (!item.IsAdded && item.Key.Length > 0) S.DismissedItems.Add(item.Key);
+        Remove(item);
+        Say($"Removed {item.Name} from Available items.");
+        SaveSession();
+    }
+
+    public void RestoreDismissed()
+    {
+        S.DismissedItems.Clear();
+        _gridHash = _storageHash = 0;
+        if (_equipped != null) LoadEquipped(_equipped);
+        SaveSession();
+        Say("Dismissed items can return on the next scan.");
+    }
+
+    public void ClearCard() => SetIncluded(Items.Where(i => i.Include), false);
+
+    CardPopout? _popout;
+
+    internal void OpenPopout(Avalonia.Controls.Window owner)
+    {
+        if (_popout != null)
+        {
+            _popout.WindowState = Avalonia.Controls.WindowState.Maximized;
+            _popout.Activate();
+            return;
+        }
+        var window = _popout = new CardPopout(this);
+        var current = owner.Screens.ScreenFromWindow(owner);
+        var target = owner.Screens.All.FirstOrDefault(screen => !screen.Equals(current)) ?? current;
+        if (target != null)
+            window.Position = new Avalonia.PixelPoint(target.WorkingArea.X + 30, target.WorkingArea.Y + 30);
+        window.Closed += (_, _) => _popout = null;
+        window.Show(owner);
+        window.WindowState = Avalonia.Controls.WindowState.Maximized;
+    }
+
+    public void RemoveCardTile(SaleItem tile) =>
+        SetIncluded((tile.MergedItems ?? [tile]).Where(Items.Contains), false);
+
+    public bool EditCardPrice(SaleItem tile, string text)
+    {
+        string price = text.Trim();
+        if (price.Length > 0 && Mesos.Parse(price) is not > 0) return false;
+        var targets = (tile.MergedItems ?? [tile]).Where(Items.Contains).ToHashSet();
+        if (targets.Count == 0) return false;
+        if (tile.ItemId != 0 && !tile.IsWanted && !tile.Buying)
+        {
+            if (!tile.IsEquipment) _book.Set(tile.ItemId, price);
+            else if (tile.HasDetails) _book.Set(tile.ItemId, price, EquipmentReader.Profile(tile.Stats, tile.Slots));
+            foreach (var row in Items.Where(i => i.ItemId == tile.ItemId && !i.IsWanted && !i.Buying &&
+                (!tile.IsEquipment || (tile.HasDetails && i.HasDetails &&
+                 EquipmentReader.Profile(i.Stats, i.Slots) == EquipmentReader.Profile(tile.Stats, tile.Slots)))))
+                targets.Add(row);
+        }
+        foreach (var item in targets) item.Custom = price;
+        SaveSession();
+        Changed?.Invoke();
+        _marketLookup?.Refresh();
+        return true;
     }
 
     /// <summary>

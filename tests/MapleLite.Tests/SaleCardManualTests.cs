@@ -11,6 +11,7 @@ public class SaleCardManualTests
     static readonly CatalogItem Ore = new() { id = 4000000, name = "Ore" };
     static readonly CatalogItem Gem = new() { id = 4000001, name = "Gem" };
     static readonly CatalogItem Scroll = new() { id = 2040000, name = "Scroll" };
+    static readonly CatalogItem Earrings = new() { id = 1032007, name = "Emerald Earrings" };
 
     public class ContextProxy : DispatchProxy
     {
@@ -28,9 +29,79 @@ public class SaleCardManualTests
     {
         var ctx = DispatchProxy.Create<IPluginContext, ContextProxy>();
         ((ContextProxy)(object)ctx).Storage = new Storage(folder ?? Path.Combine(Path.GetTempPath(), "MapleLite-manual-tests", Guid.NewGuid().ToString("N")));
-        var e = new SaleCardEngine(ctx) { Vision = new Vision(new ItemCatalog([Ore, Gem, Scroll], null)) };
+        var e = new SaleCardEngine(ctx) { Vision = new Vision(new ItemCatalog([Ore, Gem, Scroll, Earrings], null)) };
         e.LoadSession();
         return e;
+    }
+
+    [Fact]
+    public void Dismissed_shop_entry_stays_out_after_rescan_and_restart()
+    {
+        var engine = Engine();
+        var shop = new ShopRead { Seller = "Test", IsOwnerView = true, Rows = [new(Ore.id, Ore.name, 2, 100, 1, "")] };
+        engine.ImportOwnShop(shop);
+        engine.DismissAvailable(Assert.Single(engine.Items));
+        Assert.Equal(0, engine.ImportOwnShop(shop));
+        var reopened = Engine(engine.DataFolder);
+        Assert.Equal(0, reopened.ImportOwnShop(shop));
+        reopened.RestoreDismissed();
+        Assert.Equal(1, reopened.ImportOwnShop(shop));
+    }
+
+    [Fact]
+    public void Popout_price_is_shared_for_matching_rolls_and_clear_preserves_bids_and_flags()
+    {
+        var engine = Engine();
+        var first = engine.AddByHand(Earrings);
+        var match = engine.AddByHand(Earrings);
+        var different = engine.AddByHand(Earrings);
+        first.Stats = match.Stats = "DEX: +3";
+        different.Stats = "DEX: +4";
+        first.Slots = match.Slots = different.Slots = "4";
+        different.PriceFlagged = true;
+        Assert.False(engine.EditCardPrice(first, "invalid"));
+        Assert.True(engine.EditCardPrice(first, "250k"));
+        Assert.Equal("250k", match.Custom);
+        Assert.True(different.MissingPrice);
+        Assert.Equal("250k", new PriceBook(engine.DataFolder).Get(first.ItemId, EquipmentReader.Profile(first.Stats, first.Slots)));
+        engine.SetBuying(Scroll, true);
+        engine.BuyCard(Scroll.id)!.Custom = "12m";
+        engine.ClearCard();
+        var reopened = Engine(engine.DataFolder);
+        Assert.Empty(reopened.Card().items);
+        Assert.Contains(reopened.Items, i => i.Key == different.Key && i.PriceFlagged);
+        reopened.SetBuying(Scroll, true);
+        Assert.Equal("12m", Assert.Single(reopened.Card().items).Custom);
+    }
+
+    [Fact]
+    public void Popout_removes_the_underlying_entries_of_a_merged_tile()
+    {
+        var engine = Engine();
+        var first = engine.AddByHand(Ore);
+        var second = engine.AddByHand(Ore);
+        first.Qty = "10";
+        second.Qty = "20";
+        var tile = Assert.Single(engine.Card().items);
+        Assert.True(engine.EditCardPrice(tile, "900"));
+        Assert.All(engine.Items, i => Assert.Equal("900", i.Custom));
+        engine.RemoveCardTile(tile);
+        Assert.All(engine.Items, i => Assert.False(i.Include));
+        Assert.Empty(engine.Card().items);
+    }
+
+    [Fact]
+    public void Equipped_source_uses_the_current_loadout_without_selecting_gear_for_sale()
+    {
+        var engine = Engine();
+        engine.LoadEquipped(new("Test", [new("Earrings", Earrings.id, "DEX: +3", "4")]));
+        var item = Assert.Single(engine.Items);
+        Assert.Equal("DEX: +3", item.Stats);
+        Assert.True(CardSelection.Available(item, "emerald", "Equipped", "All types"));
+        Assert.False(CardSelection.Available(item, "", "Inventory", "All types"));
+        Assert.Equal(0, engine.IncludeSyncedItems([item.Key]));
+        engine.LoadEquipped(new("New character", []));
+        Assert.Empty(engine.Items);
     }
     [Fact]
     public void Manual_order_keeps_individual_stacks_and_survives_restart()

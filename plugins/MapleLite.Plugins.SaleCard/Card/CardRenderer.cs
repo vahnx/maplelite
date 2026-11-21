@@ -7,6 +7,7 @@ using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using MapleLite.Core.Imaging;
+using MapleLite.Core.Game;
 
 namespace MapleLite.Plugins.SaleCard;
 
@@ -70,6 +71,7 @@ public sealed record CardOptions
 /// </summary>
 public static class CardRenderer
 {
+    internal sealed record TileLayout(SaleItem Item, Rect Tile, Rect? Price);
     /// <summary>A colour scheme for the card: background, card, icon tile, text, quiet text, prices, lines, quantity badge.</summary>
     public sealed record Theme(string Name, string Bg, string Card, string Tile, string Text, string Muted, string Accent, string Line, string BadgeBg, string BadgeFg);
 
@@ -228,8 +230,11 @@ public static class CardRenderer
     }
 
     /// <summary>Renders the card. Returns its pixels (for the clipboard and PNG) and a bitmap (for the preview).</summary>
-    public static (Frame frame, Bitmap bitmap) Render(IReadOnlyList<SaleItem> items, CardOptions o)
+    public static (Frame frame, Bitmap bitmap) Render(IReadOnlyList<SaleItem> items, CardOptions o) => Render(items, o, null);
+
+    internal static (Frame frame, Bitmap bitmap) Render(IReadOnlyList<SaleItem> items, CardOptions o, List<TileLayout>? layout)
     {
+        var prices = layout == null ? null : new Dictionary<SaleItem, Control>();
         var t = Themes[Math.Clamp(o.Theme, 0, Themes.Length - 1)];
         IBrush B(string hex) => new SolidColorBrush(Color.Parse(hex));
         IBrush Bg = B(t.Bg), Card = B(t.Card), Tile = B(t.Tile), Text = B(t.Text), Muted = B(t.Muted), Gold = B(t.Accent), Line = B(t.Line),
@@ -496,6 +501,7 @@ public static class CardRenderer
                 var price = Words(PriceText(it), Gold, 15, FontWeight.Bold);
                 price.TextTrimming = TextTrimming.CharacterEllipsis; price.Margin = new Thickness(0, 2, 0, 0);
                 words.Children.Add(price);
+                prices?.Add(it, price);
             }
             var row = new DockPanel { VerticalAlignment = VerticalAlignment.Center };
             DockPanel.SetDock(tile, Dock.Left);
@@ -540,6 +546,7 @@ public static class CardRenderer
                 var price = Words(PriceText(it), Gold, 17, FontWeight.Bold);
                 price.TextAlignment = TextAlignment.Center; price.TextTrimming = TextTrimming.CharacterEllipsis;
                 card.Children.Add(price);
+                prices?.Add(it, price);
             }
             if (o.Prices && string.IsNullOrWhiteSpace(it.Custom) && !string.IsNullOrWhiteSpace(it.RateNote))
             {
@@ -703,6 +710,12 @@ public static class CardRenderer
 
         root.Measure(new Size(root.Width, double.PositiveInfinity));
         root.Arrange(new Rect(root.DesiredSize));
+        if (layout != null)
+        {
+            Rect Locate(Control control) => new(control.TranslatePoint(default, root) ?? default, control.Bounds.Size);
+            for (int i = 0; i < tiles.Count; i++)
+                layout.Add(new(items[i], Locate(tiles[i]), prices!.TryGetValue(items[i], out var price) ? Locate(price) : null));
+        }
         int w = (int)Math.Ceiling(root.DesiredSize.Width), h = (int)Math.Ceiling(root.DesiredSize.Height);
         var rtb = new RenderTargetBitmap(new PixelSize(Math.Max(1, w), Math.Max(1, h)), new Vector(96, 96));
         rtb.Render(root);

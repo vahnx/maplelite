@@ -23,6 +23,24 @@ internal sealed class MarketArchive : IAsyncDisposable
     void Index()
     {
         var database = new MarketDatabase(MarketDatabase.DefaultPath);
+        var priceBook = Path.Combine(AppPaths.PluginData("salecard"), "pricebook.json");
+        if (File.Exists(priceBook) || File.Exists(database.Path))
+        {
+            var json = File.Exists(priceBook) ? File.ReadAllText(priceBook) : "{}";
+            if (_previous.GetValueOrDefault(priceBook) != json)
+            {
+                var saved = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new();
+                var prices = new List<SavedAskingPrice>();
+                foreach (var (key, price) in saved)
+                {
+                    var parts = key.Split(':', 2);
+                    if (int.TryParse(parts[0], out int id) && id > 0 && !string.IsNullOrWhiteSpace(price))
+                        prices.Add(new(id, parts.Length == 2 ? parts[1] : "", price));
+                }
+                database.ReplaceAskingPrices(prices);
+                _previous[priceBook] = json;
+            }
+        }
         foreach (var name in new[] { "fm-prices.json", "site-prices.json" })
         {
             var file = Path.Combine(AppPaths.PluginData("salecard"), name);

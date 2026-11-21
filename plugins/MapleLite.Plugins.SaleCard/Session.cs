@@ -14,6 +14,7 @@ public sealed class SavedItem
     public int PricePercent { get; set; } = 100;
     /// <summary>You picked the item yourself (added by hand or corrected): tooltips never rename it.</summary>
     public bool Picked { get; set; }
+    public bool PriceFlagged { get; set; }
     public string? Icon { get; set; }   // picture of an unrecognised item (32x32 BGRA, base64)
 }
 
@@ -113,6 +114,7 @@ public sealed class Session
     public int MapScale { get; set; } = 100;
     public bool NoMap { get; set; } public string Theme { get; set; } = ""; public string? Map { get; set; } public int MapW { get; set; } public int MapH { get; set; }
     public List<SavedItem> Items { get; set; } = new();
+    public HashSet<string> DismissedItems { get; set; } = new();
     /// <summary>Your own Free Market shop was open when last seen; when it's gone, its unsold listings go back to the inventory.</summary>
     public bool ShopOpen { get; set; }
     /// <summary>Sold listings of your own shop already taken off the list ("SELLER:item:bundle:price:n").</summary>

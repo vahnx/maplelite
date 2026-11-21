@@ -6,6 +6,7 @@ namespace MapleLite.Plugins.SaleCard;
 internal static class CardSelection
 {
     public static string SourceOf(SaleItem item) => item.IsAdded ? "Manual"
+        : item.Tab == SaleCardEngine.EquippedTab ? "Equipped"
         : item.InShop ? "My FM shop" : item.Tab == SaleCardEngine.StorageTab ? "Storage" : "Inventory";
 
     public static bool Available(SaleItem item, string? search, string? source, string? type) =>

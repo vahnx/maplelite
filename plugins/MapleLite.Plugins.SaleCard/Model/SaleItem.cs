@@ -108,14 +108,19 @@ public sealed class SaleItem : INotifyPropertyChanged
     public string TradeLabel => Buying ? "Buying" : "Sale";
 
     string _custom = "";
-    public string Custom { get => _custom; set => Set(ref _custom, value, nameof(Custom), nameof(FinalPrice)); }
+    public string Custom { get => _custom; set => Set(ref _custom, value, nameof(Custom), nameof(FinalPrice), nameof(PriceReviewText)); }
 
     string _rate = "";
     /// <summary>The going rate shown under the price box ("FM asking: 88.9k (5 seen)"), or empty.</summary>
-    public string Rate { get => _rate; set => Set(ref _rate, value, nameof(Rate), nameof(FinalPrice)); }
+    public string Rate { get => _rate; set => Set(ref _rate, value, nameof(Rate), nameof(FinalPrice), nameof(PriceReviewText)); }
     /// <summary>Each source behind the going rate ("FM", "meso.watch", ...) and its figure, for the "use this price" buttons.</summary>
     public IReadOnlyList<(string Label, long Price)> RateParts = Array.Empty<(string, long)>();
     public long? RateValue;
+    public bool MissingPrice => (string.IsNullOrWhiteSpace(Custom) ? RateValue : Mesos.Parse(Custom)) is not > 0;
+    bool _priceFlagged;
+    public bool PriceFlagged { get => _priceFlagged; set => Set(ref _priceFlagged, value, nameof(PriceFlagged), nameof(PriceReviewText)); }
+    public string PriceReviewText => PriceFlagged ? "Flagged for price review" : MissingPrice ? "No price" : "";
+    internal IReadOnlyList<SaleItem>? MergedItems;
     public bool FromSite;   // the going rate shown came from a price site
 
     /// <summary>What the card prints: the price you typed, else the going rate, else "Offer".</summary>

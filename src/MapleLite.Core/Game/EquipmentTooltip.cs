@@ -99,21 +99,29 @@ public static class EquipmentReader
     /// <summary>
     /// Every equipment tooltip showing, with its title as read, when there are two or more: the hovered one and,
     /// beside it, the worn one the game shows for comparison. A tooltip whose title isn't the hovered item's is what is
-    /// worn, which tells the two apart when you later hover the identical item. Empty when only one tooltip shows.
+    /// worn, which tells the two apart when you later hover the identical item. Pass false to read a single tooltip.
     /// </summary>
-    public static async Task<List<(string title, EquipmentDetails details)>> AllAsync(IOcr ocr, Frame frame)
+    public static async Task<List<(string title, EquipmentDetails details)>> AllAsync(IOcr ocr, Frame frame, bool requireComparison = true,
+        Func<string, bool>? knownTitle = null)
     {
         var found = new List<(string, EquipmentDetails)>();
         if (!ocr.Available) return found;
         var overview = await Overview(ocr, frame);
         var ends = overview.Where(l => IsLastLine(l.Text)).ToList();
-        if (ends.Count < 2) return found;   // one tooltip: nothing to compare
+        if (requireComparison && ends.Count < 2) return found;   // one tooltip: nothing to compare
         var joined = OcrBlocks.WithJoinedNeighbours(overview);
         foreach (var end in ends)
         {
             // the title is the topmost line lined up with the last one, within a tooltip's height above it (about 175 px;
             // further up is the window behind, such as the inventory's "Equip" tab); of words joined on that row, all of them
-            var lined = joined.Where(l => l.Cy() < end.Cy() - 20 && l.Cy() > end.Cy() - 215 && Math.Abs(l.Left() - end.Left()) < 25).ToList();
+            double depth = knownTitle == null ? 215 : 320;
+            var lined = joined.Where(l => l.Cy() < end.Cy() - 20 && l.Cy() > end.Cy() - depth && Math.Abs(l.Left() - end.Left()) < 25).ToList();
+            if (knownTitle != null)
+            {
+                var matched = lined.Where(l => knownTitle(TitleParts(l.Text).name)).ToList();
+                if (matched.Count > 0) lined = matched;
+                else lined.RemoveAll(l => l.Cy() <= end.Cy() - 215);
+            }
             if (lined.Count == 0) continue;
             double topY = lined.Min(l => l.Cy());
             var title = lined.Where(l => l.Cy() < topY + 5).OrderByDescending(l => l.Text.Length).First();
@@ -159,6 +167,7 @@ public static class EquipmentReader
     {
         "STR", "DEX", "INT", "LUK", "HP", "MP", "Max HP", "Max MP", "Weapon Attack", "Magic Attack", "Weapon Def", "Magic Def",
         "Weapon Defense", "Magic Defense", "Accuracy", "Avoidability", "Speed", "Jump", "Attack Speed", "Hands", "Knockback",
+        "Attack Power", "Crit Rate", "Crit Damage",
     };
 
     static int Distance(string a, string b)

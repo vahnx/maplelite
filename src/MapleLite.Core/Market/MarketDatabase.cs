@@ -9,7 +9,9 @@ public sealed record MarketObservation(int ItemId, string Source, string Server,
     long UnitPrice = 0, int Bundle = 1, string Seller = "", string Stats = "", string Slots = "",
     long Last = 0, long Average3 = 0, long Median10 = 0, long Typical = 0);
 
-/// <summary>Independent, append-only price history. JSON source files remain recovery copies during migration.</summary>
+public sealed record SavedAskingPrice(int ItemId, string Profile, string Price);
+
+/// <summary>Append-only price history and a read-only index of current Shop Card asking prices.</summary>
 public sealed class MarketDatabase
 {
     public static string DefaultPath => System.IO.Path.Combine(AppPaths.Sub("market"), "prices.sqlite");
@@ -30,16 +32,52 @@ public sealed class MarketDatabase
               bundle INTEGER NOT NULL, seller TEXT NOT NULL, stats TEXT NOT NULL, slots TEXT NOT NULL,
               last_sale INTEGER NOT NULL, average_3 INTEGER NOT NULL, median_10 INTEGER NOT NULL, typical INTEGER NOT NULL);
             CREATE INDEX IF NOT EXISTS observations_item ON observations(item_id, server, source, observed_utc);
+            CREATE TABLE IF NOT EXISTS card_prices (
+              item_id INTEGER NOT NULL, profile TEXT NOT NULL, price TEXT NOT NULL, PRIMARY KEY (item_id, profile));
             CREATE VIEW IF NOT EXISTS website_prices AS
               SELECT item_id, server, source, observed_utc, last_sale, average_3, median_10, typical
               FROM observations WHERE source != 'FM';
             CREATE VIEW IF NOT EXISTS fm_prices AS
               SELECT item_id, server, observed_utc, unit_price, bundle, seller, stats, slots
               FROM observations WHERE source = 'FM';
-            PRAGMA user_version=1;
+            PRAGMA user_version=2;
             """;
         try { command.ExecuteNonQuery(); return db; }
         catch { db.Dispose(); throw; }
+    }
+
+    public void ReplaceAskingPrices(IEnumerable<SavedAskingPrice> prices)
+    {
+        using var db = Open();
+        using var transaction = db.BeginTransaction();
+        using var command = db.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "DELETE FROM card_prices";
+        command.ExecuteNonQuery();
+        command.CommandText = "INSERT INTO card_prices (item_id,profile,price) VALUES ($id,$profile,$price)";
+        var id = command.Parameters.Add("$id", SqliteType.Integer);
+        var profile = command.Parameters.Add("$profile", SqliteType.Text);
+        var price = command.Parameters.Add("$price", SqliteType.Text);
+        foreach (var row in prices)
+        {
+            id.Value = row.ItemId;
+            profile.Value = row.Profile;
+            price.Value = row.Price;
+            command.ExecuteNonQuery();
+        }
+        transaction.Commit();
+    }
+
+    public IReadOnlyList<SavedAskingPrice> AskingPrices(int? itemId = null)
+    {
+        using var db = Open();
+        using var command = db.CreateCommand();
+        command.CommandText = "SELECT item_id,profile,price FROM card_prices WHERE ($id IS NULL OR item_id=$id) ORDER BY item_id,profile LIMIT 500";
+        command.Parameters.AddWithValue("$id", (object?)itemId ?? DBNull.Value);
+        using var reader = command.ExecuteReader();
+        var rows = new List<SavedAskingPrice>();
+        while (reader.Read()) rows.Add(new(reader.GetInt32(0), reader.GetString(1), reader.GetString(2)));
+        return rows;
     }
 
     public void Append(IEnumerable<MarketObservation> observations)

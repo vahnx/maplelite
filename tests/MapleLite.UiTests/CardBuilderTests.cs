@@ -1,5 +1,6 @@
 using System.Reflection;
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Interactivity;
@@ -103,6 +104,38 @@ public class CardBuilderTests
         Directory.CreateDirectory(folder);
         using var frame = window.CaptureRenderedFrame();
         Assert.NotNull(frame); frame.Save(Path.Combine(folder, name + ".png"));
+    }
+
+    [AvaloniaFact]
+    public void Popout_price_controls_follow_measured_tiles_and_edit_the_same_items()
+    {
+        var (window, panel, engine) = Open();
+        try
+        {
+            Visible<Button>(panel).Single(b => Equals(b.Content, "Pop out ↗")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Pump();
+            var popout = Assert.IsType<CardPopout>(Assert.Single(window.OwnedWindows));
+            Assert.Equal(WindowState.Maximized, popout.WindowState);
+            var ore = engine.Items.Single(i => i.Name == "Emerald Ore");
+            var click = Visible<Button>(popout).Single(b => AutomationProperties.GetName(b) == $"Edit base price for {ore.Name}");
+            var location = click.TranslatePoint(default, popout)!.Value;
+            Assert.True(location.X > 0 && location.Y > 0);
+            Assert.True(click.Bounds.Width > 20);
+            click.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Pump();
+            var field = Assert.Single(Visible<TextBox>(popout));
+            Assert.Equal(ore.Custom, field.Text);
+            field.Text = "4321";
+            field.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter });
+            Pump();
+            Assert.Equal("4321", ore.Custom);
+            Assert.Contains(Visible<TextBox>(panel), box => ReferenceEquals(box.DataContext, ore) && box.Text == "4321");
+            Visible<Button>(popout).Single(b => AutomationProperties.GetName(b) == $"Remove {ore.Name} from the card")
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Pump();
+            Assert.False(ore.Include);
+        }
+        finally { window.Close(); }
     }
 
     [AvaloniaFact]

@@ -19,5 +19,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\plugins\MapleLite.Plugins.SaleCard\MapleLite.Plugins.SaleCard.csproj" />
+    <ProjectReference Include="..\..\plugins\MapleLite.Plugins.DpsSimulator\MapleLite.Plugins.DpsSimulator.csproj" />
   </ItemGroup>
 </Project>

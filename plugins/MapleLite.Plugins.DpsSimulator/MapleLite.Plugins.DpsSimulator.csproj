@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\MapleLite.Sdk\MapleLite.Sdk.csproj" Private="false" />
+    <PackageReference Include="Avalonia" Version="$(AvaloniaVersion)" />
+    <InternalsVisibleTo Include="MapleLite.Tests" />
+  </ItemGroup>
+</Project>
