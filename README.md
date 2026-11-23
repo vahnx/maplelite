@@ -76,7 +76,9 @@ combinations. macOS and Linux report `Supported = false` for now (plugins keep t
 
 **Just want to run it?** On 64-bit Windows 10/11, download
 [`bin/MapleLite-windows-x64.zip`](bin/MapleLite-windows-x64.zip), unzip it anywhere and run `MapleLite.exe`.
-Nothing else needs to be installed. macOS and Linux builds aren't posted yet; build one with the script below.
+On an Apple Silicon Mac, download [`bin/MapleLite-macos-arm64.zip`](bin/MapleLite-macos-arm64.zip), unzip it and run
+`MapleLite` (or `./MapleLite` from Terminal). Both downloads include the .NET runtime.
+Intel Mac and Linux builds can be made with the script below.
 
 **Want to build it yourself?** Download or clone this repo and run the script for your system. Each one makes a
 standalone copy in `bin/` that runs without .NET installed, plus a zip of it to share. If the
