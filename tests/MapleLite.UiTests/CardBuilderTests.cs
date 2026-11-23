@@ -35,6 +35,30 @@ public class TestApp : Application
 
 public class CardBuilderTests
 {
+    [AvaloniaFact]
+    public void Card_exports_preserve_preview_colours_in_every_theme()
+    {
+        for (int theme = 0; theme < CardRenderer.Themes.Length; theme++)
+        {
+            var (frame, bitmap) = CardRenderer.Render(
+                [new SaleItem { Name = "Colour test", Custom = "12345" }],
+                new CardOptions { Theme = theme, Seller = "Seller", ShowTime = false });
+            using (bitmap)
+            {
+                // Avalonia's own PNG writer is independent of our raw-pixel export path.
+                using var preview = new MemoryStream();
+                bitmap.Save(preview);
+                var expected = FrameFiles.DecodePng(preview.ToArray());
+                Assert.Equal(expected.Px, frame.Px);
+                foreach (bool opaque in new[] { false, true }) // clipboard and Save PNG
+                {
+                    var exported = FrameFiles.DecodePng(FrameFiles.EncodePng(frame, opaque));
+                    Assert.Equal(expected.Px, exported.Px);
+                }
+            }
+        }
+    }
+
     public class Context : DispatchProxy
     {
         public IPluginStorage Storage = null!;

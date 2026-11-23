@@ -720,10 +720,14 @@ public static class CardRenderer
         var rtb = new RenderTargetBitmap(new PixelSize(Math.Max(1, w), Math.Max(1, h)), new Vector(96, 96));
         rtb.Render(root);
         var frame = new Frame(rtb.PixelSize.Width, rtb.PixelSize.Height);
-        unsafe
+        // Render targets can use RGBA (e.g. Skia on macOS), while Frame always uses BGRA.
+        // The framebuffer overload transcodes rather than copying platform-native bytes unchanged.
+        using (var bgra = new WriteableBitmap(rtb.PixelSize, rtb.Dpi, PixelFormat.Bgra8888, AlphaFormat.Unpremul))
+        using (var pixels = bgra.Lock())
         {
-            fixed (int* p = frame.Px)
-                rtb.CopyPixels(new PixelRect(rtb.PixelSize), (nint)p, frame.Px.Length * 4, frame.W * 4);
+            rtb.CopyPixels(pixels, AlphaFormat.Unpremul);
+            for (int y = 0; y < frame.H; y++)
+                System.Runtime.InteropServices.Marshal.Copy(pixels.Address + y * pixels.RowBytes, frame.Px, y * frame.W, frame.W);
         }
         for (int i = 0; i < frame.Px.Length; i++) frame.Px[i] |= Pixel.Black;   // the card's background fills it: opaque
         return (frame, rtb);
