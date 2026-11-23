@@ -206,7 +206,7 @@ internal sealed class PartyQuestPanel : StackPanel
         var all = _summaries.Where(r => StringComparer.CurrentCultureIgnoreCase.Equals(r.Run.Quest, quest))
             .Select((summary, index) => (Summary: summary, Number: index + 1))
             .Where(r => r.Summary.Run.Started.LocalDateTime.Date >= FirstDay()).ToArray();
-        var rows = all.Reverse().Select(r =>
+        var rows = Enumerable.Reverse(all).Select(r =>
         {
             var run = r.Summary.Run;
             var duration = run.Ended is { } ended ? XpTrackerPlugin.Duration(ended - run.Started) : "Recording";
