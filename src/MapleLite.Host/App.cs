@@ -23,6 +23,10 @@ internal sealed class App : Application
         {
             Source = new Uri("avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml"),
         });
+        Styles.Add(new Avalonia.Markup.Xaml.Styling.StyleInclude(new Uri("avares://MapleLite/"))
+        {
+            Source = new Uri("avares://Avalonia.Controls.ColorPicker/Themes/Fluent/Fluent.xaml"),
+        });
     }
 
     public override async void OnFrameworkInitializationCompleted()

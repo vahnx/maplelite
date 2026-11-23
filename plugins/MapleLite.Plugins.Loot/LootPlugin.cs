@@ -4,7 +4,9 @@ using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using MapleLite.Core.Capture;
 using MapleLite.Core.Game;
+using MapleLite.Core.Market;
 using MapleLite.Sdk;
+using Microsoft.Data.Sqlite;
 using static MapleLite.Sdk.PanelKit;
 
 namespace MapleLite.Plugins.Loot;
@@ -21,23 +23,32 @@ public sealed class LootPlugin : IPlugin, ICompanionPanel
     LootReader? _reader;
     MesoWatcher? _mesos;
     IMapSource? _map;
+    LootSettings _settings = new();
     ItemNames _names = new([]);
+    LootHighlights _highlights = new(ItemCatalog.Empty);
+    readonly DispatcherTimer _priceTimer = new() { Interval = TimeSpan.FromSeconds(30) };
+    readonly DispatcherTimer _alertTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
+    readonly List<(DateTimeOffset Expires, string Text, uint Rgb)> _alerts = [];
+    bool _running, _loadingPrices;
+    string _priceStatus = "";
     IDisposable? _chat;
     readonly DateTimeOffset _sessionStart = DateTimeOffset.Now;
     string _note = "";
 
-    public PluginManifest Manifest { get; } = new("loot", "Loot", "0.1.0-alpha", "CheesyFrog Technologies",
-        "Totals of the mesos and items you pick up, by session, day, week or all time.");
+    public PluginManifest Manifest { get; } = new("loot", "Loot Logger", "0.1.0-alpha", "CheesyFrog Technologies",
+        "Log item and meso pickups, with color highlights and alerts for selected items and price ranges.");
 
     /// <summary>Raised on the UI thread after a pickup is saved.</summary>
     internal event Action? Changed;
 
-    public Task StartAsync(IPluginContext context)
+    public async Task StartAsync(IPluginContext context)
     {
         _ctx = context;
         _log = new LootLog(context.Storage.Folder);
-        var settings = context.Storage.Load<LootSettings>("settings");
-        if (!settings.ImportChecked)
+        _settings = context.Storage.Load<LootSettings>("settings");
+        _settings.PriceRanges ??= LootPriceRange.Defaults();
+        _settings.ItemHighlights ??= [];
+        if (!_settings.ImportChecked)
         {
             try
             {
@@ -45,10 +56,21 @@ public sealed class LootPlugin : IPlugin, ICompanionPanel
                 if (n > 0) _note = $"Imported {n:N0} pickups from the MapleMemory app.";
             }
             catch (IOException e) { context.Log("import failed: " + e.Message); }
-            settings.ImportChecked = true;
-            context.Storage.Save("settings", settings);
+            _settings.ImportChecked = true;
+            context.Storage.Save("settings", _settings);
         }
         _names = new ItemNames(context.Items);
+        _highlights = new LootHighlights(context.Items);
+        _highlights.SetRules(_settings.PriceRanges, _settings.ItemHighlights);
+        _running = true;
+        _priceTimer.Tick += async (_, _) => await RefreshPricesAsync();
+        _alertTimer.Tick += (_, _) => DrawAlerts();
+        if (_highlights.HasPriceRanges)
+        {
+            await RefreshPricesAsync();
+            if (!_running) return;
+            _priceTimer.Start();
+        }
         _reader = new LootReader(context.Frames, context.Ocr, context.Events, (t, d, text) =>
             {
                 if (d.Kind == "Mesos") _mesos?.Reconciler.Noticed(d.Quantity);
@@ -68,7 +90,69 @@ public sealed class LootPlugin : IPlugin, ICompanionPanel
         {
             if (e.Channel == "Loot" && GameText.Pickup(e.Text) is { } d) Save(e.Time, d, e.Text, "chat");
         });
-        return Task.CompletedTask;
+    }
+
+    async Task RefreshPricesAsync()
+    {
+        if (!_running || !_highlights.HasPriceRanges || _loadingPrices || _ctx is not { } ctx) return;
+        _loadingPrices = true;
+        try
+        {
+            var prices = await Task.Run(() => new MarketDatabase(MarketDatabase.DefaultPath).ItemPriceEstimates());
+            if (!_running) return;
+            _priceStatus = prices.Count == 0 ? "No item prices in the Market archive yet." : "";
+            if (_highlights.SetPrices(prices)) Changed?.Invoke();
+        }
+        catch (Exception e) when (e is SqliteException or IOException or UnauthorizedAccessException)
+        {
+            _priceStatus = "Couldn't read item prices from the Market archive.";
+            ctx.Log("price refresh failed: " + e.Message);
+        }
+        finally { _loadingPrices = false; }
+    }
+
+    void SaveHighlightSettings(List<LootPriceRange> ranges, List<LootItemHighlight> items, bool showOverlay)
+    {
+        if (_ctx is not { } ctx) return;
+        var settings = new LootSettings
+        {
+            ImportChecked = _settings.ImportChecked, PriceRanges = ranges, ItemHighlights = items, ShowDropOverlay = showOverlay,
+        };
+        ctx.Storage.Save("settings", settings);
+        _settings = settings;
+        _highlights.SetRules(ranges, items);
+        ClearAlerts();
+        if (_highlights.HasPriceRanges)
+        {
+            _priceTimer.Start();
+            _ = RefreshPricesAsync();
+        }
+        else _priceTimer.Stop();
+        Changed?.Invoke();
+    }
+
+    void ClearAlerts()
+    {
+        _alertTimer.Stop();
+        if (_alerts.Count == 0) return;
+        _alerts.Clear();
+        _ctx?.Overlay.Clear();
+    }
+
+    void DrawAlerts()
+    {
+        if (_ctx is not { } ctx) return;
+        _alerts.RemoveAll(alert => alert.Expires <= DateTimeOffset.Now);
+        if (_alerts.Count == 0 || !ctx.Overlay.Enabled || ctx.Frames.Latest is not { } frame)
+        {
+            _alertTimer.Stop();
+            _alerts.Clear();
+            ctx.Overlay.Clear();
+            return;
+        }
+        var scale = frame.Window.Scale;
+        ctx.Overlay.Draw(_alerts.Select((alert, i) =>
+            new OverlayItem(frame.Frame.W / 2.0, (52 + i * 29) * scale, alert.Text) { LabelAccentRgb = alert.Rgb }).ToArray());
     }
 
     void Save(DateTimeOffset time, LootDrop drop, string text, string source)
@@ -79,13 +163,24 @@ public sealed class LootPlugin : IPlugin, ICompanionPanel
 
     void Store(LootRecord record)
     {
-        if (_log == null || _ctx == null) return;
-        try { _log.Add(record); Changed?.Invoke(); }
-        catch (IOException e) { _ctx.Log("couldn't save a pickup: " + e.Message); }
+        if (!_running || _log == null || _ctx == null) return;
+        try { _log.Add(record); }
+        catch (IOException e) { _ctx.Log("couldn't save a pickup: " + e.Message); return; }
+        if (_settings.ShowDropOverlay && _ctx.Overlay.Enabled && _highlights.Find(record.Kind, record.Name) is { } highlight)
+        {
+            if (_alerts.Count >= 3) _alerts.RemoveAt(0);
+            _alerts.Add((DateTimeOffset.Now.AddSeconds(5), highlight.WithPrice(record.Drop.Summary), highlight.Rgb));
+            _alertTimer.Start();
+            DrawAlerts();
+        }
+        Changed?.Invoke();
     }
 
     public async Task StopAsync()
     {
+        _running = false;
+        _priceTimer.Stop();
+        ClearAlerts();
         _chat?.Dispose();
         if (_reader != null) await _reader.StopAsync();
         if (_mesos != null) await _mesos.StopAsync();
@@ -98,8 +193,9 @@ public sealed class LootPlugin : IPlugin, ICompanionPanel
     public Control? CreatePanel()
     {
         if (_ctx == null || _log == null || _reader == null) return null;
-        var view = new LootView(_log, _names, _sessionStart);
+        var view = new LootView(_log, _names, _sessionStart, _highlights);
         var status = Muted("");
+        var priceStatus = Muted("");
         var ctx = _ctx; var reader = _reader; var log = _log; var mesos = _mesos; var map = _map;
 
         void Refresh()
@@ -113,11 +209,12 @@ public sealed class LootPlugin : IPlugin, ICompanionPanel
                   + (mesos?.Box != null && mesos.Reconciler.Total is { } total ? $" · meso total {total:N0}" : " · open your inventory to also check the meso total")
                   + (ctx.Events.Last<ChatAreaEvent>() == null ? " · turn on Chat History to also count pickups printed in chat" : " · also counting pickups in chat"));
             view.Refresh();
+            priceStatus.Text = _highlights.HasPriceRanges ? _priceStatus : "";
+            priceStatus.IsVisible = !string.IsNullOrEmpty(priceStatus.Text);
         }
 
         var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         timer.Tick += (_, _) => Refresh();
-        Changed += Refresh;
         reader.RecordingSaved += folder => ctx.OnUi(() => { _note = "Recording saved to " + folder; Refresh(); OpenFolder(folder); });
         var actions = Wrap(
             Button("Export CSV…", async () => await Export(view)),
@@ -129,9 +226,12 @@ public sealed class LootPlugin : IPlugin, ICompanionPanel
                 _note = "● Recording what the reader sees for 20 seconds: pick things up now.";
                 Refresh();
             }));
-        var panel = Stack(12, actions, Card(status, 12), view);
-        panel.AttachedToVisualTree += (_, _) => { timer.Start(); Refresh(); };
-        panel.DetachedFromVisualTree += (_, _) => timer.Stop();
+        var itemNames = ctx.Items.Items.Select(item => item.name)
+            .Concat(log.Records.Where(record => record.Kind == "Item").Select(record => record.Name));
+        var panel = Stack(12, actions, Card(status, 12),
+            LootHighlightSettings.Create(_settings, itemNames, SaveHighlightSettings, priceStatus), view);
+        panel.AttachedToVisualTree += (_, _) => { Changed += Refresh; timer.Start(); Refresh(); };
+        panel.DetachedFromVisualTree += (_, _) => { Changed -= Refresh; timer.Stop(); };
         return panel;
     }
 

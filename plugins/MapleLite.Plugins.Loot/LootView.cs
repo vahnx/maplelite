@@ -18,6 +18,7 @@ internal sealed class LootView : UserControl
 {
     readonly LootLog _log;
     readonly ItemNames _names;
+    readonly LootHighlights _highlights;
     readonly DateTimeOffset _sessionStart;
     internal static readonly string[] Periods = ["This session", "Today", "Yesterday", "Last 7 days", "Last 30 days", "All time", "Custom dates"];
     const int Session = 0, AllTime = 5, Custom = 6;
@@ -27,14 +28,15 @@ internal sealed class LootView : UserControl
     readonly TextBlock _totals = Muted("");
     readonly WrapPanel _tiles = new();
     readonly ListBox _recent = new() { Height = 220 };
-    int _shownCount = -1;
+    int _shownCount = -1, _shownHighlightRevision;
     string? _shownMap, _shownRange;
     bool _filling;
     const string AllMaps = "All maps", NoMap = "Map not recorded";
 
-    public LootView(LootLog log, ItemNames names, DateTimeOffset sessionStart)
+    public LootView(LootLog log, ItemNames names, DateTimeOffset sessionStart, LootHighlights highlights)
     {
         _log = log; _names = names; _sessionStart = sessionStart;
+        _highlights = highlights;
         _period.SelectionChanged += (_, _) => { if (_filling) return; ShowDates(); Refresh(); };
         _fromDate.SelectedDateChanged += (_, _) => DatePicked();
         _toDate.SelectedDateChanged += (_, _) => DatePicked();
@@ -102,8 +104,10 @@ internal sealed class LootView : UserControl
         string pick = _mapPick.SelectedItem as string ?? AllMaps;
         var (from, to) = Window(_period.SelectedIndex, _sessionStart, _fromDate.SelectedDate, _toDate.SelectedDate);
         string range = $"{from:O}|{to:O}";
-        if (records.Count == _shownCount && range == _shownRange && pick == _shownMap) return;
+        if (records.Count == _shownCount && range == _shownRange && pick == _shownMap &&
+            _shownHighlightRevision == _highlights.Revision) return;
         _shownCount = records.Count; _shownRange = range;
+        _shownHighlightRevision = _highlights.Revision;
 
         var inPeriod = records.Where(r => r.Time >= from && r.Time < to).ToList();
         _shownMap = pick = FillMaps(inPeriod, pick);
@@ -119,16 +123,23 @@ internal sealed class LootView : UserControl
         _tiles.Children.Clear();
         if (gained > 0) _tiles.Children.Add(Tile("Mesos", gained, $"{gained:N0} mesos gained in {drops.Count(d => d.Kind == "Mesos"):N0} pickups", ThemeTokens.Accent, Picture("Mesos", "Mesos", 32)));
         foreach (var item in items)
-            _tiles.Children.Add(Tile(item.Name, item.Quantity, $"{item.Name} ×{item.Quantity:N0} in {item.Pickups:N0} pickups. Last: {item.Last.ToLocalTime():MMM dd HH:mm:ss}", ThemeTokens.Text, Picture("Item", item.Name, 32)));
+            _tiles.Children.Add(Tile(item.Name, item.Quantity, $"{item.Name} ×{item.Quantity:N0} in {item.Pickups:N0} pickups. Last: {item.Last.ToLocalTime():MMM dd HH:mm:ss}",
+                ThemeTokens.Text, Picture("Item", item.Name, 32), _highlights.Find("Item", item.Name)));
 
         _recent.ItemsSource = drops.AsEnumerable().Reverse().Take(200).Select(d =>
         {
             var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             row.Children.Add(Picture(d.Kind, d.Name, 24));
-            var text = PanelKit.Text($"{d.When}   {d.Drop.Summary}   ({d.Source}" + (d.Map != null && pick == AllMaps ? $" · {d.Map})" : ")"), ThemeTokens.Text, 12);
+            var highlight = _highlights.Find(d.Kind, d.Name);
+            var description = $"{d.When}   {d.Drop.Summary}   ({d.Source}" + (d.Map != null && pick == AllMaps ? $" · {d.Map})" : ")");
+            var text = PanelKit.Text(highlight?.WithPrice(description) ?? description, ThemeTokens.Text, 12);
             text.VerticalAlignment = VerticalAlignment.Center;
             row.Children.Add(text);
-            return row;
+            return highlight == null ? (Control)row : new Border
+            {
+                BorderBrush = new SolidColorBrush(highlight.Color), BorderThickness = new Thickness(4, 0, 0, 0),
+                Padding = new Thickness(5, 0, 0, 0), Child = row,
+            };
         }).ToList();
     }
 
@@ -191,7 +202,7 @@ internal sealed class LootView : UserControl
         : quantity >= 100_000 ? ($"{quantity / 1_000}K", ThemeTokens.Text)
         : (quantity.ToString("N0"), ThemeTokens.Warning);
 
-    static Border Tile(string name, long quantity, string tip, string nameToken, Control picture)
+    static Border Tile(string name, long quantity, string tip, string nameToken, Control picture, LootHighlight? highlight = null)
     {
         var (text, token) = StackLabel(quantity);
         var count = PanelKit.Text(text, token, 13, FontWeight.Bold);
@@ -204,7 +215,14 @@ internal sealed class LootView : UserControl
         var grid = new Grid();
         grid.Children.Add(picture); grid.Children.Add(count); grid.Children.Add(label);
         var tile = new Border { Width = 124, Height = 84, Margin = new Thickness(0, 0, 6, 6), CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(1), Child = grid }
-            .Themed(Border.BackgroundProperty, ThemeTokens.SurfaceAlt).Themed(Border.BorderBrushProperty, ThemeTokens.Border);
+            .Themed(Border.BackgroundProperty, ThemeTokens.SurfaceAlt);
+        if (highlight == null) tile.Themed(Border.BorderBrushProperty, ThemeTokens.Border);
+        else
+        {
+            tile.BorderBrush = new SolidColorBrush(highlight.Color);
+            tile.BorderThickness = new Thickness(2);
+            if (highlight.PriceLabel is { } price) tip += $"\nArchived price: {price}";
+        }
         ToolTip.SetTip(tile, tip);
         return tile;
     }

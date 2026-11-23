@@ -22,6 +22,10 @@ public sealed class LootSettings
 {
     /// <summary>True once the MapleMemory app's pickup history has been offered for import.</summary>
     public bool ImportChecked { get; set; }
+
+    public List<LootPriceRange> PriceRanges { get; set; } = LootPriceRange.Defaults();
+    public List<LootItemHighlight> ItemHighlights { get; set; } = [];
+    public bool ShowDropOverlay { get; set; }
 }
 
 /// <summary>

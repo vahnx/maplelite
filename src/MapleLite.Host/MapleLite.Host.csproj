@@ -27,6 +27,7 @@
     <!-- Window and taskbar icon on every OS (the .exe icon above is Windows-only). -->
     <AvaloniaResource Include="Assets\MapleLite.ico" />
     <PackageReference Include="Avalonia.Desktop" Version="$(AvaloniaVersion)" />
+    <PackageReference Include="Avalonia.Controls.ColorPicker" Version="$(AvaloniaVersion)" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="$(AvaloniaVersion)" />
     <ProjectReference Include="..\MapleLite.Core\MapleLite.Core.csproj" />
     <ProjectReference Include="..\MapleLite.Sdk\MapleLite.Sdk.csproj" />
@@ -51,7 +52,7 @@
     and copies their own assembly (Core, Sdk and Avalonia always come from the host).
   -->
   <ItemGroup>
-    <BundledPlugin Include="MapleLite.Plugins.ChatHistory;MapleLite.Plugins.Loot;MapleLite.Plugins.SaleCard;MapleLite.Plugins.DpsSimulator;MapleLite.Plugins.XpTracker;MapleLite.Plugins.SpawnTimer;MapleLite.Plugins.Camera" />
+    <BundledPlugin Include="MapleLite.Plugins.ChatHistory;MapleLite.Plugins.Loot;MapleLite.Plugins.SaleCard;MapleLite.Plugins.DpsSimulator;MapleLite.Plugins.XpTracker;MapleLite.Plugins.SpawnTimer;MapleLite.Plugins.Camera;MapleLite.Plugins.PlayerFinder" />
     <ProjectReference Include="@(BundledPlugin->'$(MSBuildThisFileDirectory)..\..\plugins\%(Identity)\%(Identity).csproj')"
                       ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>

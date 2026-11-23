@@ -7,6 +7,7 @@
     <PackageReference Include="Avalonia.Headless.XUnit" Version="11.3.21" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.21" />
     <PackageReference Include="Avalonia.Skia" Version="11.3.21" />
+    <ProjectReference Include="../../plugins/MapleLite.Plugins.Loot/MapleLite.Plugins.Loot.csproj" />
     <ProjectReference Include="../../plugins/MapleLite.Plugins.SaleCard/MapleLite.Plugins.SaleCard.csproj" />
     <ProjectReference Include="../../plugins/MapleLite.Plugins.XpTracker/MapleLite.Plugins.XpTracker.csproj" />
     <Compile Include="../../src/MapleLite.Host/Themes/ThemeService.cs" Link="ThemeService.cs" />

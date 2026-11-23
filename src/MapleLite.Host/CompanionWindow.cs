@@ -61,7 +61,7 @@ internal sealed class CompanionWindow : Window
 
     void ShowPanel()
     {
-        if (_plugins.SelectedItem is not ComboBoxItem { Tag: string key }) { _body.Content = Ui.Muted("Enable Loot, XP Tracker or Chat History in Settings."); return; }
+        if (_plugins.SelectedItem is not ComboBoxItem { Tag: string key }) { _body.Content = Ui.Muted("Enable Loot Logger, XP Tracker or Chat History in Settings."); return; }
         if (!_panels.TryGetValue(key, out var panel))
         {
             var entry = _shell.Plugins.Entries.FirstOrDefault(p => p.Running && $"{p.Manifest.Id}#{p.Generation}" == key);

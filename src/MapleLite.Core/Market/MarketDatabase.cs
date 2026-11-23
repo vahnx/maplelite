@@ -126,4 +126,34 @@ public sealed class MarketDatabase
             reader.GetInt64(9), reader.GetInt64(10), reader.GetInt64(11), reader.GetInt64(12)));
         return rows;
     }
+
+    /// <summary>Per-item estimates from the latest usable observations, preferring saved item-wide asks.</summary>
+    public IReadOnlyDictionary<int, long> ItemPriceEstimates()
+    {
+        var prices = new Dictionary<int, long>();
+        if (!File.Exists(Path)) return prices;
+
+        using var db = Open();
+        using var command = db.CreateCommand();
+        command.CommandText = """
+            WITH ranked AS (
+                SELECT item_id,
+                    COALESCE(NULLIF(unit_price, 0), NULLIF(typical, 0), NULLIF(median_10, 0),
+                             NULLIF(last_sale, 0), average_3) AS price,
+                    ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY observed_utc DESC, observation_id) AS rank
+                FROM observations
+                WHERE unit_price > 0 OR typical > 0 OR median_10 > 0 OR last_sale > 0 OR average_3 > 0
+            )
+            SELECT item_id, price FROM ranked WHERE rank = 1
+            """;
+        using (var reader = command.ExecuteReader())
+            while (reader.Read()) prices[reader.GetInt32(0)] = reader.GetInt64(1);
+
+        command.CommandText = "SELECT item_id, price FROM card_prices WHERE profile = ''";
+        using (var reader = command.ExecuteReader())
+            while (reader.Read())
+                if (MesoAmount.Parse(reader.GetString(1)) is > 0 and var price) prices[reader.GetInt32(0)] = price;
+
+        return prices;
+    }
 }

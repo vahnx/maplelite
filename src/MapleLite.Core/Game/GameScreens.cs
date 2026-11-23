@@ -33,6 +33,15 @@ public static class MapReader
     /// </summary>
     public static (int[] px, int w, int h)? Picture(Frame f)
     {
+        if (PictureBounds(f) is not { } bounds) return null;
+        var image = f.Crop(bounds);
+        for (int i = 0; i < image.Px.Length; i++) image.Px[i] |= unchecked((int)0xFF000000);
+        return (image.Px, image.W, image.H);
+    }
+
+    /// <summary>The map picture's bounds in the original game frame.</summary>
+    public static Region? PictureBounds(Frame f)
+    {
         var state = State(f);
         if (state != MinimapState.Full && state != MinimapState.NameHidden) return null;
         for (int y = 16; y < Math.Min(f.H - 40, 160); y++)
@@ -62,11 +71,7 @@ public static class MapReader
             while (x1 - x0 > 60 && PlainCol(x1)) x1--;
             int w = x1 - x0 + 1, h = y1 - y0 + 1;
             if (w < 40 || h < 20 || h > 400) return null;
-            var px = new int[w * h];
-            for (int yy = 0; yy < h; yy++)
-                for (int xx = 0; xx < w; xx++)
-                    px[yy * w + xx] = f.At(x0 + xx, y0 + yy) | unchecked((int)0xFF000000);
-            return (px, w, h);
+            return new Region(x0, y0, w, h);
         }
         return null;
     }

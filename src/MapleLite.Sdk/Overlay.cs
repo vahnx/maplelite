@@ -1,3 +1,5 @@
+using MapleLite.Core.Imaging;
+
 namespace MapleLite.Sdk;
 
 /// <summary>
@@ -32,4 +34,11 @@ public enum OverlayTone { Normal, Accent, Good, Warning, Danger, Muted }
 /// A label at a point in the game picture (the same coordinates as <see cref="MapleLite.Core.Capture.GameFrame"/>'s
 /// frame). With <see cref="Ring"/> set (0–1), a small circular timer is drawn around the point, filled that far.
 /// </summary>
-public sealed record OverlayItem(double X, double Y, string Text, OverlayTone Tone = OverlayTone.Normal, double? Ring = null, double Size = 14);
+public sealed record OverlayItem(double X, double Y, string Text, OverlayTone Tone = OverlayTone.Normal, double? Ring = null, double Size = 14)
+{
+    /// <summary>Optional rectangle in game pixels. A dimmed rectangle is drawn behind all labels and outlines.</summary>
+    public Region? Rectangle { get; init; }
+    public bool Dim { get; init; }
+    /// <summary>Optional label outline, as an opaque 0xRRGGBB color.</summary>
+    public uint? LabelAccentRgb { get; init; }
+}

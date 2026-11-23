@@ -26,7 +26,7 @@ reads game memory, captures packets, or sends input to the game, and neither can
 | `src/MapleLite.Platform.Mac` | macOS: window finding, ScreenCaptureKit capture, Apple Vision OCR, clipboard. Not yet run against the native client. |
 | `src/MapleLite.Platform.Linux` | Linux (milestone 5): X11/XComposite for the Wine/Proton window, Tesseract OCR. Stub today. |
 | `src/MapleLite.Host` | The Avalonia app: Game page, plugin pages, Settings, themes, plugin loader. |
-| `plugins/*` | Bundled plugins: Chat History (the MapleMemory app, ported), Loot, Shop Card, DPS Simulator, XP Tracker, Respawn Timer, Camera. |
+| `plugins/*` | Bundled plugins: Chat History (the MapleMemory app, ported), Loot Logger, Shop Card, DPS Simulator, XP Tracker, Respawn Timer, Camera, Player Finder. |
 | `samples/HelloPlugin` | A minimal third-party plugin to copy. |
 | `tests/MapleLite.Tests` | xUnit tests on fake engines and synthetic frames (never the live game). |
 
@@ -193,7 +193,7 @@ reviewed hub that builds them from source.
 ## Chat History
 
 A chat journal. Its parsers, spam and partial-repeat filters and time filters
-are the app's code, unchanged (the loot tracker is now the Loot plugin); its 99 self-test checks run as xUnit tests. What changed: frames come
+are the app's code, unchanged (the loot tracker is now the Loot Logger plugin); its 99 self-test checks run as xUnit tests. What changed: frames come
 from the host's capture loop and text from the shared OCR (chat-glyph cleanup, row grouping, bicubic enlarge), and
 the page is Avalonia, so it runs on every OS the host does.
 
@@ -207,21 +207,29 @@ the page is Avalonia, so it runs on every OS the host does.
 - Checked against the app on a saved capture: the same three messages, channels (Megaphone, Buddy, Megaphone) and
   wrapped-line assembly.
 
-## Loot
+## Loot Logger
 
 Totals of the mesos and items you pick up, by session, day, week or all time, with a CSV export. Moved out of Chat History
 into its own plugin.
 
-![Loot: totals for the chosen dates, with every item's icon and the recent pickups](docs/screenshots/loot.png)
+![Loot Logger: totals for the chosen dates, with every item's icon and the recent pickups](docs/screenshots/loot.png)
 
 Pickups come from two places:
 
-- the game's pickup notices in the lower-right of the picture, read by the Loot plugin with the shared OCR;
+- the game's pickup notices in the lower-right of the picture, read by Loot Logger with the shared OCR;
 - pickup lines printed in chat, which Chat History publishes on the event bus (when Chat History is on).
 
-Chat History also publishes where the chat box is, and Loot leaves that area out of its own reads so the same pickup
+Chat History also publishes where the chat box is, and Loot Logger leaves that area out of its own reads so the same pickup
 isn't counted twice. Pickups are saved one file per day, as `loot-YYYY-MM-DD.jsonl` in `plugins/loot/`. First start
 copies the pickups out of the MapleMemory app's history.
+
+Open **Drop highlights** to set up to five price ranges and choose a color for each. Both bounds include the
+entered price. You can leave one bound blank or leave both blank to disable that row. If ranges overlap, the
+first matching row wins. Loot Logger colors matching item tiles and recent pickups using the saved item-wide
+Shop Card ask or the latest usable Market archive estimate per item. Turn on **Show drop alerts over the game**
+to show matching new pickups for five seconds when MapleLite's Windows game overlay is enabled.
+Under **Specific items**, search the catalog and recorded pickups, add an item, choose its color, and save.
+Item colors take priority over price ranges and work even when the item has no archived price.
 
 ## XP Tracker
 
@@ -308,6 +316,19 @@ the ordinary weapon and spell equations plus Lucky Seven. Enter the element mult
 for your skill and target. The estimate models continuous attacks against a single target.
 [Monster data from MapleClassic Wiki](https://mapleclassic.wiki/wiki/Monsters) ·
 [Combat formulas from NiaDB](https://meowdb.com/msclassic/guides/explaining-the-damage-formula)
+
+## Player Finder
+
+Open **Player Finder** and choose a readable character name from **Nearby players** for a temporary highlight.
+Use **+ Watch** to keep following that character, or type one or more exact names to add them to the watchlist.
+Watched players can trigger an alert when spotted. The watchlist saves the last sighting's location,
+the channel last read from the game's Change Channel window, and the time in your system's local format.
+Turn on **Settings → Overlay** and use windowed or borderless mode on Windows for in-game markers.
+
+- Player Finder outlines readable nameplates, Free Market shop signs, standard overhead speech bubbles, and matching chat lines.
+  When nameplates overlap, the speech bubble's pointer can provide an estimated position.
+- Minimap markers appear when Player Finder can line up your own nameplate and yellow dot with a visible target's red dot.
+- Focus mode dims the surrounding scene and follows the chat panel as it expands or collapses.
 
 ## Camera
 

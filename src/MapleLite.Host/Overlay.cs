@@ -210,10 +210,22 @@ internal sealed class OverlayWindow : Window
     /// <summary>Adds the items to <paramref name="canvas"/>: shared by the live overlay and <see cref="OverlayService.SaveComposite"/>.</summary>
     internal static void Draw(Canvas canvas, IEnumerable<OverlayItem> items, (int X, int Y) offset, double scale)
     {
-        foreach (var it in items)
+        foreach (var it in items.OrderBy(it => !it.Dim))
         {
             double x = (it.X + offset.X) / scale, y = (it.Y + offset.Y) / scale;
             var color = Tone(it.Tone);
+            if (it.Rectangle is { } box)
+            {
+                var shape = new Rectangle
+                {
+                    Width = box.Width / scale, Height = box.Height / scale,
+                    Fill = it.Dim ? new SolidColorBrush(Color.FromArgb(170, 0, 0, 0)) : null,
+                    Stroke = it.Dim ? null : new SolidColorBrush(color), StrokeThickness = it.Dim ? 0 : 2,
+                };
+                Canvas.SetLeft(shape, (box.X + offset.X) / scale);
+                Canvas.SetTop(shape, (box.Y + offset.Y) / scale);
+                canvas.Children.Add(shape);
+            }
             if (it.Ring is { } ring)
             {
                 const double r = 13;
@@ -230,6 +242,11 @@ internal sealed class OverlayWindow : Window
                     CornerRadius = new CornerRadius(4), Padding = new Thickness(5, 1),
                     Child = new TextBlock { Text = it.Text, Foreground = new SolidColorBrush(color), FontSize = it.Size, FontWeight = FontWeight.SemiBold },
                 };
+                if (it.LabelAccentRgb is { } rgb)
+                {
+                    label.BorderBrush = new SolidColorBrush(Color.FromUInt32(rgb | 0xFF000000u));
+                    label.BorderThickness = new Thickness(2);
+                }
                 label.Measure(Size.Infinity);
                 Canvas.SetLeft(label, x - label.DesiredSize.Width / 2);
                 Canvas.SetTop(label, it.Ring != null ? y + 15 : y - label.DesiredSize.Height / 2);
