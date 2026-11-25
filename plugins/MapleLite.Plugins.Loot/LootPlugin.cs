@@ -44,7 +44,8 @@ public sealed class LootPlugin : IPlugin, ICompanionPanel
     public async Task StartAsync(IPluginContext context)
     {
         _ctx = context;
-        _log = new LootLog(context.Storage.Folder);
+        _names = new ItemNames(context.Items);
+        _log = new LootLog(context.Storage.Folder, _names);
         _settings = context.Storage.Load<LootSettings>("settings");
         _settings.PriceRanges ??= LootPriceRange.Defaults();
         _settings.ItemHighlights ??= [];
@@ -59,7 +60,6 @@ public sealed class LootPlugin : IPlugin, ICompanionPanel
             _settings.ImportChecked = true;
             context.Storage.Save("settings", _settings);
         }
-        _names = new ItemNames(context.Items);
         _highlights = new LootHighlights(context.Items);
         _highlights.SetRules(_settings.PriceRanges, _settings.ItemHighlights);
         _running = true;
@@ -164,7 +164,7 @@ public sealed class LootPlugin : IPlugin, ICompanionPanel
     void Store(LootRecord record)
     {
         if (!_running || _log == null || _ctx == null) return;
-        try { _log.Add(record); }
+        try { record = _log.Append(record); }
         catch (IOException e) { _ctx.Log("couldn't save a pickup: " + e.Message); return; }
         if (_settings.ShowDropOverlay && _ctx.Overlay.Enabled && _highlights.Find(record.Kind, record.Name) is { } highlight)
         {

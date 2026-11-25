@@ -174,8 +174,8 @@ internal sealed class LootReader
         foreach (var l in read)
         {
             if (GameText.Pickup(l.Text) is not { } drop) continue;
-            var fixedDrop = names.Fix(drop);
-            bool known = drop.Kind != "Item" || fixedDrop.Name != drop.Name || names.Match(drop.Name) != null;
+            var fixedDrop = names.Fix(drop, l.Text);
+            bool known = drop.Kind != "Item" || names.IsKnown(fixedDrop.Name);
             // A garbled read (usually a fading notice) would count as a new pickup: leave it out.
             if (drop.Kind == "Item" && !names.Trusted(drop.Name, known)) continue;
             var line = new NoticeLine($"{fixedDrop.Kind}|{fixedDrop.Name}|{fixedDrop.Quantity}", l.Box.CenterY, l.Box.Height, Brightness(f, l.Box))

@@ -43,6 +43,7 @@ public sealed record CardOptions
     public bool HideOffer { get; init; }
     public bool Compact { get; init; }
     public bool Stats { get; init; } = true;
+    public bool HideMissingTooltipWarnings { get; init; }
     /// <summary>Every price is printed at this share of the list price (the price slider): 1 unchanged.</summary>
     public double PriceScale { get; init; } = 1;
     public string Total { get; init; } = "";
@@ -509,9 +510,9 @@ public static class CardRenderer
             row.Children.Add(words);
             var body = new StackPanel { VerticalAlignment = VerticalAlignment.Top };
             body.Children.Add(row);
-            if (it.ShowsDetails && o.Stats)
+            if (o.Stats && it.CardDetails(o.HideMissingTooltipWarnings) is { Length: > 0 } detailText)
             {
-                var details = Words(it.DetailsText, Text, 12);
+                var details = Words(detailText, Text, 12);
                 details.TextWrapping = TextWrapping.Wrap; details.Margin = new Thickness(0, 8, 0, 0);
                 body.Children.Add(details);
             }
@@ -554,9 +555,9 @@ public static class CardRenderer
                 note.TextWrapping = TextWrapping.Wrap; note.TextAlignment = TextAlignment.Center; note.Margin = new Thickness(0, 3, 0, 0);
                 card.Children.Add(note);
             }
-            if (it.ShowsDetails && o.Stats)
+            if (o.Stats && it.CardDetails(o.HideMissingTooltipWarnings) is { Length: > 0 } detailText)
             {
-                var details = Words(it.DetailsText, Text, 12);
+                var details = Words(detailText, Text, 12);
                 details.TextWrapping = TextWrapping.Wrap; details.Margin = new Thickness(0, 8, 0, 2);
                 card.Children.Add(details);
             }

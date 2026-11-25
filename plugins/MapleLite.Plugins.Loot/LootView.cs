@@ -1,5 +1,7 @@
 using Avalonia;
+using Avalonia.Collections;
 using Avalonia.Controls;
+using Avalonia.Controls.Shapes;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
@@ -166,7 +168,7 @@ internal sealed class LootView : UserControl
 
     /// <summary>
     /// The item's catalog picture at <paramref name="size"/> pixels (pixel art, so scaled without smoothing), a coin for
-    /// mesos, or an empty square of the same size when the catalog has no picture (a name OCR couldn't match).
+    /// mesos, or a themed question mark when the item picture is unavailable.
     /// </summary>
     Control Picture(string kind, string name, double size)
     {
@@ -178,13 +180,23 @@ internal sealed class LootView : UserControl
             };
         if (!_icons.TryGetValue(name, out var bmp))
         {
-            // Older pickups may be logged under a half-read name: try the catalog's closest name too.
-            var path = _names.IconPath(name) ?? (_names.Match(name) is { } known ? _names.IconPath(known) : null);
+            var path = _names.IconPath(name);
             try { bmp = path != null ? new Bitmap(path) : null; }
             catch (Exception e) when (e is IOException or ArgumentException or NotSupportedException) { bmp = null; }
             _icons[name] = bmp;
         }
-        if (bmp == null) return new Border { Width = size, Height = size };
+        if (bmp == null)
+        {
+            var mark = PanelKit.Text("?", ThemeTokens.Text, size * 0.67, FontWeight.Bold);
+            mark.HorizontalAlignment = HorizontalAlignment.Center;
+            mark.VerticalAlignment = VerticalAlignment.Center;
+            var outline = new Rectangle
+            {
+                RadiusX = size / 6, RadiusY = size / 6,
+                StrokeThickness = 1, StrokeDashArray = new AvaloniaList<double> { 3, 2 },
+            }.Themed(Shape.StrokeProperty, ThemeTokens.TextMuted);
+            return new Grid { Width = size, Height = size, Children = { outline, mark } };
+        }
         var image = new Image { Source = bmp, Width = size, Height = size, Stretch = Stretch.Uniform };
         RenderOptions.SetBitmapInterpolationMode(image, Avalonia.Media.Imaging.BitmapInterpolationMode.None);
         return image;

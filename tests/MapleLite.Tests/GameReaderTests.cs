@@ -186,4 +186,16 @@ public class TooltipTextTests
         Assert.Equal("Max MP: +5\nMagic Def: +32 (30+2)\nEvasion: +2", d!.Stats);
         Assert.Equal("5", d.Slots);
     }
+
+    [Fact]
+    public void Aurora_cosmetic_tooltip_records_the_type_and_trade_restriction_without_slots()
+    {
+        string[] lines = ["Type: Cape", "This item cannot be traded oncetft h\"", "been equipped.",
+            "li this item is equipped, it cannot be", "exchanged for an Aurora Stamp."];
+        var details = Assert.IsType<EquipmentDetails>(EquipmentReader.ParseCosmetic(lines));
+        Assert.Equal("Type: Cape\nCannot be traded once equipped", details.Stats);
+        Assert.Equal(EquipmentDetails.NoUpgradeSlots, details.Slots);
+        Assert.Null(EquipmentReader.ParseCosmetic(lines[..3]));
+        Assert.Null(EquipmentReader.ParseCosmetic([.. lines, "Remaining Enhancements: 7"]));
+    }
 }

@@ -266,6 +266,7 @@ public sealed class SaleCardEngine
                     Key = s.Key, ItemId = s.ItemId, Tab = s.Tab, Category = Categories.Of(s.ItemId), Stacks = s.Stacks,
                     Name = s.Name, Qty = s.Qty, Include = s.Include, Custom = s.Custom, Stats = s.Stats, Slots = s.Slots, SlotRow = s.SlotRow, SlotCol = s.SlotCol,
                     AutoStats = s.AutoStats, AutoSlots = s.AutoSlots, IconPx = iconPx, Buying = s.Buying, PricePercent = s.PricePercent, Picked = s.Picked, PriceFlagged = s.PriceFlagged,
+                    HideMissingTooltip = s.HideMissingTooltip,
                 };
                 if (_notForSale.Has(item.Ident)) continue;
                 item.Icon = Icon(s.ItemId, iconPx);
@@ -304,6 +305,7 @@ public sealed class SaleCardEngine
                 Key = i.Key, ItemId = i.ItemId, Tab = i.Tab, Name = i.Name, Qty = i.Qty, Include = i.Include, Custom = i.Custom,
                 Stats = i.Stats, Slots = i.Slots, SlotRow = i.SlotRow, SlotCol = i.SlotCol, AutoStats = i.AutoStats, AutoSlots = i.AutoSlots, Stacks = i.Stacks,
                 Icon = Session.Base64(i.IconPx), Buying = i.Buying, PricePercent = i.PricePercent, Picked = i.Picked, PriceFlagged = i.PriceFlagged,
+                HideMissingTooltip = i.HideMissingTooltip,
             }).ToList();
             Store.Write(SessionFile, JsonSerializer.Serialize(S));
         }
@@ -329,7 +331,7 @@ public sealed class SaleCardEngine
             // (not what you want in an item you are buying: that is a wish, not a reading)
             if (it.IsEquipment && !it.IsWanted && !string.IsNullOrWhiteSpace(it.Stats)) _hover.Set(it.ItemId, it.Key, it.Stats, it.Slots);
         }
-        if (e.PropertyName is nameof(SaleItem.Include) or nameof(SaleItem.Stats) or nameof(SaleItem.Slots) && !_bulk) Changed?.Invoke();
+        if (e.PropertyName is nameof(SaleItem.Include) or nameof(SaleItem.Stats) or nameof(SaleItem.Slots) or nameof(SaleItem.HideMissingTooltip) && !_bulk) Changed?.Invoke();
         if (e.PropertyName is nameof(SaleItem.Icon) or nameof(SaleItem.RateNote)) { }
         CardChanged?.Invoke();
         QueueSave();
@@ -738,7 +740,7 @@ public sealed class SaleCardEngine
         string why = "";
         foreach (var card in cards)   // normally one; older cards for the same slot are tried too
         {
-            var (details, reason) = await EquipmentReader.ReadWhyAsync(_ctx.Ocr, frame, card.Name, both => ChooseHovered(card, both));
+            var (details, reason) = await EquipmentReader.ReadWhyAsync(_ctx.Ocr, frame, card.Name, both => ChooseHovered(card, both), allowCosmetic: true);
             // The worn item's tooltip beside this one (a different item) tells what is worn, for when its twin is hovered.
             await LearnWorn(frame, card.Name);
             if (details == null) { why = reason; continue; }
@@ -903,6 +905,7 @@ public sealed class SaleCardEngine
     readonly HashSet<string> _unsure = new();   // unrecognised slots seen on the last automatic scan
     bool _unsurePending;
     readonly HashSet<string> _missing = new();  // cards not found on the last read of their tab: removed if still gone on the next
+    readonly List<(SaleItem Item, DateTime Expires)> _recentInventoryDepartures = new();
     /// <summary>Per inventory tab, the slots the last scan saw empty. A card is never made for one of those from text near the pointer.</summary>
     readonly Dictionary<string, HashSet<(int, int)>> _emptySlots = new();
     /// <summary>Per slot, a fingerprint of its picture and the item read there at the last scan taken with the pointer away.</summary>
@@ -1088,6 +1091,7 @@ public sealed class SaleCardEngine
                 carryState = true;
                 carryInclude = prior.Include; carryCustom = prior.Custom; carryStats = prior.Stats; carrySlots = prior.Slots; carryPercent = prior.PricePercent;
                 item.AutoStats = prior.AutoStats; item.AutoSlots = prior.AutoSlots; item.Picked = prior.Picked;
+                item.HideMissingTooltip = prior.HideMissingTooltip;
                 // the card back from the shop has found its slot: this card replaces it
                 if (prior.Key.StartsWith(ReturnedPrefix, StringComparison.Ordinal)) Remove(prior);
                 // The same item in the same slot with a new count (you picked up more ore): the old card is replaced,
@@ -1133,15 +1137,17 @@ public sealed class SaleCardEngine
         // whole tab is showing (no scrolling), nothing looks covered, and it is still gone on a second look.
         var stillMissing = new HashSet<string>();
         bool whole = auto && unclear == 0 && (storage || lay.Tab >= 0) && !Vision.Scrollable(frame, lay);
+        int removed = 0;
         if (whole)
         {
             var present = cards.Select(k => k.key).ToHashSet();
+            _recentInventoryDepartures.RemoveAll(entry => present.Contains(entry.Item.Key));
             foreach (var gone in Items.Where(i => i.Tab == tab && !present.Contains(i.Key)).ToList())
             {
                 if (!_missing.Contains(gone.Key)) { stillMissing.Add(gone.Key); _unsurePending = true; continue; }
                 // The same item turning up in another slot or stack size keeps what you set on it. Failing that,
                 // equipment you moved between inventory and storage: a bare card of the same item in the other place.
-                static bool Bare(SaleItem n) => string.IsNullOrWhiteSpace(n.Stats) && string.IsNullOrWhiteSpace(n.Slots) && string.IsNullOrWhiteSpace(n.Custom);
+                static bool Bare(SaleItem n) => !n.HideMissingTooltip && string.IsNullOrWhiteSpace(n.Stats) && string.IsNullOrWhiteSpace(n.Slots) && string.IsNullOrWhiteSpace(n.Custom);
                 bool worth = !gone.IsEquipment || !Bare(gone);
                 var heir = gone.ItemId == 0 ? null
                     : fresh.FirstOrDefault(n => n.ItemId == gone.ItemId)
@@ -1150,6 +1156,7 @@ public sealed class SaleCardEngine
                 if (heir != null)
                 {
                     fresh.Remove(heir);
+                    if (gone.HideMissingTooltip) heir.HideMissingTooltip = true;
                     // Inclusion was resolved when the replacement was created: a stale card never overwrites a newer choice.
                     if (heir.IsEquipment)
                     {
@@ -1158,7 +1165,10 @@ public sealed class SaleCardEngine
                         heir.Stats = gone.Stats; heir.Slots = gone.Slots;
                     }
                 }
+                else if (!storage && _emptySlots.TryGetValue(tab, out var empty) && empty.Contains((gone.SlotRow, gone.SlotCol)))
+                    ConfirmInventoryDeparture(gone);
                 Remove(gone);
+                removed++;
             }
         }
         foreach (var card in Items.Where(i => i.Tab == tab).ToList()) Recall(card);
@@ -1166,7 +1176,7 @@ public sealed class SaleCardEngine
         _missing.UnionWith(stillMissing);
         _unsure.RemoveWhere(k => k.StartsWith(StorageTab + ":") == storage);
         _unsure.UnionWith(seenUnsure);
-        if (added > 0) { Changed?.Invoke(); SaveSession(); }
+        if (added > 0 || removed > 0) { Changed?.Invoke(); SaveSession(); }
         string where = storage ? "Storage" : $"{tab} tab";
         return (added, added == 0 ? $"{where}: nothing new."
             : $"{where}: added {added} item{(added == 1 ? "" : "s")}" +
@@ -1234,11 +1244,11 @@ public sealed class SaleCardEngine
             Say($"Read {item.Name}: {stats.Replace("\n", ", ")}.");
             return;
         }
-        var details = await EquipmentReader.ReadAsync(_ctx.Ocr, frame, item.Name);
+        var (details, _) = await EquipmentReader.ReadWhyAsync(_ctx.Ocr, frame, item.Name, allowCosmetic: true);
         if (details == null) { Say("Couldn't read one unambiguous tooltip for this item. Try again or enter its stats and remaining slots."); return; }
         item.Stats = details.Stats;
         item.Slots = details.Slots;
-        Say($"Read {item.Name}. Review the stats, signs and remaining slots before exporting.");
+        Say(details.Slots == EquipmentDetails.NoUpgradeSlots ? $"Read {item.Name}'s cosmetic tooltip." : $"Read {item.Name}. Review the stats, signs and remaining slots before exporting.");
     }
 
     // ---------------------------------------------------------------- prices
@@ -1294,6 +1304,12 @@ public sealed class SaleCardEngine
         // pointer is still where the last full read put the list, keep using that read's rows to know what is hovered.
         bool fresh = _lastShop != null && DateTime.UtcNow - _lastShopAt < TimeSpan.FromSeconds(30);
         bool inLast = fresh && cursor is { } pc && pc.x >= _lastShop!.Left && pc.x < _lastShop.Right;
+        if (shop?.IsOwnerView != true && !inLast && cursor is { } pointer &&
+            await ReadOwnShopCosmetic(frame, vision, pointer) is { } cosmetic)
+        {
+            _shopGone = 0;
+            return cosmetic;
+        }
         var closedNote = TrackOwnShop(shop, inLast);
         if (closedNote != null) return closedNote;
         if (shop == null && !inLast) return null;
@@ -1333,7 +1349,7 @@ public sealed class SaleCardEngine
             }
             else if (hovered != null && vision.Catalog.TryGetValue(hovered.ItemId, out var cat))
             {
-                var (details, why) = await EquipmentReader.ReadWhyAsync(_ctx.Ocr, frame, cat.name, both => NotWorn(cat.name, both));
+                var (details, why) = await EquipmentReader.ReadWhyAsync(_ctx.Ocr, frame, cat.name, both => NotWorn(cat.name, both), allowCosmetic: true);
                 await LearnWorn(frame, cat.name);
                 string key = $"shop:{map.Seller}:{hovered.ItemId}:{hovered.Bundle}:{hovered.Price}";
                 if (details != null)
@@ -1344,6 +1360,7 @@ public sealed class SaleCardEngine
                 }
                 else hoverNote = $"hovering {cat.name}: no stats yet ({why})" + HoverFailed(key, cat.name, frame, cursor, $"shop {map.Left}..{map.Right}, row top {hovered.Top}", why);
             }
+            else if (hovered == null && await ReadOwnShopCosmetic(frame, vision, c) is { } cosmeticNote) hoverNote = cosmeticNote;
         }
         if (added > 0)
         {
@@ -1364,6 +1381,26 @@ public sealed class SaleCardEngine
     ShopRead? _lastShop;
     DateTime _lastShopAt;
     int _shopGone;   // reads in a row without your own shop, since it was last seen open
+
+    // A tooltip can cover the row or the shop. Cosmetic details are shared by copies of the same item, so the
+    // exact tooltip can fill existing cards without reading or guessing the listing's price.
+    async Task<string?> ReadOwnShopCosmetic(Frame frame, Vision vision, (int x, int y) cursor)
+    {
+        if (!S.ShopOpen) return null;
+        var cards = Items.Where(item => item.InShop && item.IsEquipment && vision.Catalog.ContainsKey(item.ItemId)).ToList();
+        if (cards.Count == 0) return null;
+        var catalog = cards.Select(item => vision.Catalog[item.ItemId]).Distinct().ToArray();
+        if (await ItemTooltipReader.ReadAsync(_ctx.Ocr, frame, cursor, catalog) is not { } named) return null;
+        var (details, _) = await EquipmentReader.ReadWhyAsync(_ctx.Ocr, frame, named.name, allowCosmetic: true);
+        if (details?.Slots != EquipmentDetails.NoUpgradeSlots) return null;
+        string? note = null;
+        foreach (var card in cards.Where(item => item.ItemId == named.id))
+        {
+            HoverRead(card.Key);
+            note = PutStats(card, details);
+        }
+        return note;
+    }
 
     /// <summary>
     /// Notices your own shop closing: it was open (the owner's view, with Close Store), and then hasn't been seen for
@@ -1428,6 +1465,7 @@ public sealed class SaleCardEngine
         if (string.IsNullOrWhiteSpace(home.Stats) && string.IsNullOrWhiteSpace(home.Slots))
         { home.Stats = back.Stats; home.Slots = back.Slots; home.AutoStats = back.AutoStats; home.AutoSlots = back.AutoSlots; }
         if (back.Include) home.Include = true;
+        if (back.HideMissingTooltip) home.HideMissingTooltip = true;
         Remove(back);
     }
 
@@ -1496,6 +1534,7 @@ public sealed class SaleCardEngine
         if (!shop.IsOwnerView || Vision == null || string.IsNullOrWhiteSpace(shop.Seller)) return 0;
         RemoveSold(shop);
         int added = 0;
+        var newListings = new HashSet<SaleItem>();
         var occurrences = new Dictionary<string, int>();
         foreach (var row in shop.Rows.Where(r => r.ItemId != 0 && r.Score >= 0.72 && r.Bundle > 0 && r.Price > 0))
         {
@@ -1518,10 +1557,44 @@ public sealed class SaleCardEngine
                     ? (row.Price / row.Bundle).ToString() : $"{row.Price:N0} per {row.Bundle}" };
             ApplyRate(item);
             Add(item);
+            newListings.Add(item);
             added++;
         }
+        _recentInventoryDepartures.RemoveAll(entry => entry.Expires <= DateTime.UtcNow ||
+            (newListings.Count > 0 && TryTransferToShop(entry.Item, newListings)));
         if (added > 0) { SaveSession(); Changed?.Invoke(); CardChanged?.Invoke(); }
         return added;
+    }
+
+    // Called only after two complete scans agree that the inventory slot is empty.
+    internal void ConfirmInventoryDeparture(SaleItem item)
+    {
+        if (!item.Include || item.Buying || StackMax(item.ItemId) == 0 || item.Stacks != 1 ||
+            !int.TryParse(item.Key.Split(':').ElementAtOrDefault(3), out int scannedCount) || scannedCount <= 0 || item.Pieces != scannedCount) return;
+        if (S.ShopOpen && TryTransferToShop(item)) return;
+        var now = DateTime.UtcNow;
+        _recentInventoryDepartures.RemoveAll(entry => entry.Expires <= now || entry.Item.Key == item.Key);
+        _recentInventoryDepartures.Add((item, now.AddMinutes(1)));
+    }
+
+    bool TryTransferToShop(SaleItem item, HashSet<SaleItem>? newListings = null)
+    {
+        var matches = Items.Where(listing => listing.InShop && !listing.Buying && listing.ItemId == item.ItemId &&
+                int.TryParse(listing.Key.Split(':').ElementAtOrDefault(3), out int bundle) && bundle == item.Pieces)
+            .Take(2).ToArray();
+        if (matches.Length != 1 || (newListings != null && !newListings.Contains(matches[0]))) return false;
+        var match = matches[0];
+        if (match.Pieces != item.Pieces) return false;
+        // Keep the actual listing price. The existing price-review filter gives the seller a chance to change the card price.
+        if (!string.IsNullOrWhiteSpace(item.Custom))
+        {
+            var before = Mesos.Parse(item.Custom);
+            var after = Mesos.Parse(match.Custom);
+            if (before.HasValue && after.HasValue ? before != after : item.Custom.Trim() != match.Custom.Trim())
+                match.PriceFlagged = true;
+        }
+        match.Include = true;
+        return true;
     }
 
     bool _browserBusy;
@@ -1657,9 +1730,9 @@ public sealed class SaleCardEngine
         foreach (var item in chosen)
         {
             int max = StackMax(item.ItemId);
-            if (item.ItemId == 0 || max == 0 || Count(item.Qty) == null) { result.Add(item); continue; }
+            if (item.InShop || max == 0 || Count(item.Qty) == null) { result.Add(item); continue; }
             if (!done.Add(item.ItemId)) continue;
-            var group = chosen.Where(i => i.ItemId == item.ItemId && Count(i.Qty) != null).ToList();
+            var group = chosen.Where(i => !i.InShop && i.ItemId == item.ItemId && Count(i.Qty) != null).ToList();
             long total = group.Sum(i => Count(i.Qty)!.Value);
             long full = total / max, rest = total % max;
             string custom = group.Select(i => i.Custom).FirstOrDefault(c => !string.IsNullOrWhiteSpace(c)) ?? "";
@@ -1742,6 +1815,7 @@ public sealed class SaleCardEngine
             Title = S.Title, Seller = S.Seller, Server = S.Server, Channel = S.Channel, Location = S.MapNameHidden ? "" : S.Location, Tagline = S.Tagline ?? "",
             Avatar = S.NoAvatar ? null : AvatarFor(S.Seller), Map = S.NoMap ? null : CardMap(), MapScale = Math.Clamp(S.MapScale, 40, 100) / 100.0,
             Prices = S.PricesShown, Obo = S.Obo, HideOffer = S.HideOffer, Compact = S.CompactTiles, Stats = !S.NoStats,
+            HideMissingTooltipWarnings = S.HideMissingTooltipWarnings,
             Total = total, TotalNote = totalNote, PriceScale = priceScale, Groups = !S.NoGroups && S.Order != "Manual", KindTotals = kindTotals,
             Theme = Math.Max(0, Array.FindIndex(CardRenderer.Themes, t => t.Name == S.Theme)),
             ShowTime = !S.NoTime, Zone = S.LocalTime ? S.Zone : "",
@@ -1878,9 +1952,30 @@ public sealed class SaleCardEngine
         Say("Dismissed items can return on the next scan.");
     }
 
-    public void ClearCard() => SetIncluded(Items.Where(i => i.Include), false);
+    public void ClearCard()
+    {
+        _recentInventoryDepartures.Clear();
+        SetIncluded(Items.Where(i => i.Include), false);
+    }
 
     CardPopout? _popout;
+
+    internal async Task<string> CopyCardImageAsync()
+    {
+        string message;
+        try
+        {
+            var (items, options) = Card();
+            var (frame, bitmap) = CardRenderer.Render(items, options);
+            bitmap.Dispose();
+            message = await _ctx.CopyImageAsync(frame)
+                ? "Image copied. Paste it into Discord with Ctrl+V." + MissingNote()
+                : "Copying pictures isn't supported on this system yet. Use Save PNG… in Shop Card.";
+        }
+        catch (Exception e) { message = "Copy failed: " + e.Message; }
+        Report(message);
+        return message;
+    }
 
     internal void OpenPopout(Avalonia.Controls.Window owner)
     {
@@ -2034,6 +2129,7 @@ public sealed class SaleCardEngine
 
     public void Clear()
     {
+        _recentInventoryDepartures.Clear();
         foreach (var i in Items.ToList()) Remove(i);
         _gridHash = 0; _storageHash = 0;
         Say("List cleared.");
@@ -2090,7 +2186,7 @@ public sealed class SaleCardEngine
         (_book, _hover, _notForSale, _fm, _site) = (new(_folder), new(_folder), new(_folder), new(_folder), new(_folder));
         _mapPx = null; _avatarPx = null; AvatarShown = null; _avatarFor = ""; _portrait.Clear();
         _gridHash = 0; _storageHash = 0; _lastLay = null; _hoverDone = null;
-        _slotSeen.Clear(); _slotTitle.Clear(); _missing.Clear(); _unsure.Clear(); _emptySlots.Clear();
+        _slotSeen.Clear(); _slotTitle.Clear(); _missing.Clear(); _unsure.Clear(); _emptySlots.Clear(); _recentInventoryDepartures.Clear();
         LoadSession();
         if (monitoring || !S.MonitorOff) SetMonitor(!S.MonitorOff);
         CardChanged?.Invoke();

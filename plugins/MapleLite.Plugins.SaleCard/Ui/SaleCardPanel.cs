@@ -44,15 +44,15 @@ internal sealed class SaleCardPanel : UserControl
     readonly TextBlock _selectedTitle = PaneTitle("On your card · 0");
     readonly TextBlock _selectedEmpty = Muted("Add items from the list on the left, or search the item database with + Add item.");
     readonly TextBlock _selectionHidden = Muted("Selling is hidden from the exported card. Turn on Selling in the preview to show these items.");
-    readonly WrapPanel _kindPrices = new();
+    readonly StackPanel _kindPrices = new() { Spacing = 6 };
     string _kindPricesFor = "\0";   // the kinds the sliders were last built for
     readonly Image _preview = new() { Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly, VerticalAlignment = VerticalAlignment.Top };
     readonly TextBlock _status = Muted(""), _browserStatus = Muted(""), _gameLine = Muted(""), _sellerLine = Text("", ThemeTokens.Text, 16, FontWeight.SemiBold);
     readonly TabControl _sections = new();
     readonly ToggleSwitch _prices = new() { OnContent = "Prices shown", OffContent = "Prices hidden" };
+    readonly ToggleSwitch _tooltipWarnings = new() { OnContent = "Tooltip warnings shown", OffContent = "Tooltip warnings hidden" };
     readonly ToggleButton _sellingOn = new() { Content = "Selling" }, _buyingOn = new() { Content = "Buying" };
-    readonly Slider _priceSlider = new() { Minimum = 1, Maximum = 200, Value = 100, TickFrequency = 1, IsSnapToTickEnabled = true, Width = 150, VerticalAlignment = VerticalAlignment.Center };
-    readonly Button _pricePercent = new() { Content = "100%", MinWidth = 58, Padding = new Thickness(6, 2), VerticalAlignment = VerticalAlignment.Center };
+    readonly Slider _priceSlider;
     readonly DispatcherTimer _render;
     (MapleLite.Core.Imaging.Frame frame, Avalonia.Media.Imaging.Bitmap bitmap)? _card;
     bool _loading;   // filling controls from the session: their change handlers must not write back
@@ -68,10 +68,13 @@ internal sealed class SaleCardPanel : UserControl
         _ctx = ctx;
         _render = new DispatcherTimer(TimeSpan.FromMilliseconds(250), DispatcherPriority.Background, (_, _) => { _render!.Stop(); RenderCard(); });
 
-        var copy = Button("Copy image", async () => await CopyAsync(), accent: true);
+        var copy = Button("Copy image", async () => await _engine.CopyCardImageAsync(), accent: true);
         var save = Button("Save PNG…", async () => await SaveAsync());
         _prices.IsCheckedChanged += (_, _) => { if (_loading) return; S.ShowPrices = _prices.IsChecked == true; S.HidePrices = !S.PricesShown; _engine.SettingsChanged(); };
         ToolTip.SetTip(_prices, "Show or leave out the prices on the card. Your prices stay in the list either way.");
+        _tooltipWarnings.IsCheckedChanged += (_, _) => { if (_loading) return; S.HideMissingTooltipWarnings = _tooltipWarnings.IsChecked != true; _engine.SettingsChanged(); };
+        ToolTip.SetTip(_tooltipWarnings, "Show missing-tooltip warnings on the card. Recorded details still appear when warnings are hidden.");
+        Avalonia.Automation.AutomationProperties.SetName(_tooltipWarnings, "Show missing-tooltip warnings on the card");
 
         var who = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, VerticalAlignment = VerticalAlignment.Center, Children = { _sellerLine, _gameLine } };
         // one click puts every selling item, or every item you're buying, on the card or takes them all off
@@ -81,7 +84,8 @@ internal sealed class SaleCardPanel : UserControl
         ToolTip.SetTip(_buyingOn, "On: the items you're buying (the Buying tab) are on the card. Off: none of them are. Your ticks are kept either way.");
         var onCard = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center,
             Children = { new TextBlock { Text = "On the card:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) }.Themed(TextBlock.ForegroundProperty, ThemeTokens.TextMuted), _sellingOn, _buyingOn } };
-        var actions = Wrap(onCard, _prices, save, copy, Button("Export CSV…", async () => await ExportCsvAsync()), Button("Import CSV…", async () => await ImportCsvAsync()), Button("Clear card…", async () => await ClearCardAsync()));
+        var cardSwitches = Wrap(_prices, _tooltipWarnings);
+        var actions = Wrap(onCard, cardSwitches, save, copy, Button("Export CSV…", async () => await ExportCsvAsync()), Button("Import CSV…", async () => await ImportCsvAsync()), Button("Clear card…", async () => await ClearCardAsync()));
         var top = new DockPanel { Margin = new Thickness(0, 0, 0, 10) };
 
         top.Children.Add(who);
@@ -102,14 +106,12 @@ internal sealed class SaleCardPanel : UserControl
         ToolTip.SetTip(maximize, "Shows the card across the whole page, as large as it fits. Press Reduce (or Esc) to bring the lists back.");
         // a bar above the card, so the button never covers part of it
         var previewBar = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
-        DockPanel.SetDock(maximize, Dock.Right);
-        previewBar.Children.Add(maximize);
+        var previewTitle = PaneTitle("Card preview");
+        previewTitle.VerticalAlignment = VerticalAlignment.Top;
+        DockPanel.SetDock(previewTitle, Dock.Left);
+        previewBar.Children.Add(previewTitle);
         var popout = Button("Pop out ↗", OpenPopout);
-        popout.Margin = new Thickness(0, 0, 8, 0);
-        DockPanel.SetDock(popout, Dock.Right);
-        previewBar.Children.Add(popout);
-        var editCard = new ToggleButton { Content = "Edit card", Margin = new Thickness(0, 0, 8, 0) };
-        DockPanel.SetDock(editCard, Dock.Right); previewBar.Children.Add(editCard);
+        var editCard = new ToggleButton { Content = "Edit card" };
         editCard.IsCheckedChanged += (_, _) =>
         {
             _liveEditorScroll.IsVisible = editCard.IsChecked == true;
@@ -117,22 +119,22 @@ internal sealed class SaleCardPanel : UserControl
             _previewBox.Height = _liveEditorScroll.IsVisible ? 650 : _maximized ? 720 : 400;
             RefreshCardEditor();
         };
-        // the price slider: every price on the card (and the total) at 1% to 200% of the list's; clicking the figure puts it back to 100%
-        _priceSlider.ValueChanged += (_, _) =>
+        var (priceBar, priceSlider) = CardPriceSlider(engine);
+        _priceSlider = priceSlider;
+        var kindPrices = new Button
         {
-            int pct = (int)Math.Round(_priceSlider.Value);
-            _pricePercent.Content = pct + "%";
-            if (_loading || pct == S.PricePercent) return;
-            S.PricePercent = pct; _engine.SettingsChanged();
+            Content = "Price adjustments…",
+            Flyout = new Flyout
+            {
+                Placement = PlacementMode.Bottom,
+                Content = new ScrollViewer { Content = _kindPrices, Width = 310, MaxHeight = 360, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled },
+            },
         };
-        _pricePercent.Click += (_, _) => _priceSlider.Value = 100;
-        ToolTip.SetTip(_priceSlider, "Raises or lowers every price on the card, and the total, by a percent of the price in your list (1% to 200%). Your list keeps its prices.");
-        ToolTip.SetTip(_pricePercent, "Prices on the card as a percent of your list. Click to put it back to 100%.");
-        var priceBar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center,
-            Children = { new TextBlock { Text = "Prices", VerticalAlignment = VerticalAlignment.Center }.Themed(TextBlock.ForegroundProperty, ThemeTokens.TextMuted), _priceSlider, _pricePercent } };
-        DockPanel.SetDock(priceBar, Dock.Right);
-        previewBar.Children.Add(priceBar);
-        previewBar.Children.Add(new TextBlock { Text = "Card preview", FontSize = 18, FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center }.Themed(TextBlock.ForegroundProperty, ThemeTokens.TextMuted));
+        ToolTip.SetTip(kindPrices, "Adjust card prices by item type.");
+        var previewTools = Wrap(priceBar, kindPrices, editCard, popout, maximize);
+        previewTools.HorizontalAlignment = HorizontalAlignment.Right;
+        previewTools.Margin = new Thickness(8, 0, 0, 0);
+        previewBar.Children.Add(previewTools);
         var previewDock = new DockPanel();
         actions.HorizontalAlignment = HorizontalAlignment.Right;
         actions.Margin = new Thickness(0, 12, 0, 0);
@@ -349,6 +351,29 @@ internal sealed class SaleCardPanel : UserControl
         return (new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center, Children = { slider, label } }, slider, label);
     }
 
+    internal static (StackPanel panel, Slider slider) CardPriceSlider(SaleCardEngine engine)
+    {
+        var (controls, slider, percent) = PercentSlider(150,
+            "Adjusts every selling price and the total on the card as a percentage of the list prices.",
+            "Reset the overall card price adjustment to 100%.");
+        Avalonia.Automation.AutomationProperties.SetName(slider, "Overall card price adjustment");
+        Avalonia.Automation.AutomationProperties.SetName(percent, "Reset overall card price adjustment");
+        slider.ValueChanged += (_, _) =>
+        {
+            int value = (int)Math.Round(slider.Value);
+            percent.Content = $"{value}%";
+            if (value == Math.Clamp(engine.S.PricePercent, 1, 200)) return;
+            engine.S.PricePercent = value;
+            engine.SettingsChanged();
+        };
+        percent.Click += (_, _) => slider.Value = 100;
+        slider.Value = Math.Clamp(engine.S.PricePercent, 1, 200);
+        var label = Muted("Prices");
+        label.VerticalAlignment = VerticalAlignment.Center;
+        return (new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center,
+            Children = { label, controls } }, slider);
+    }
+
     /// <summary>One item: tick, icon, name and going rate, price %, quantity, price, and a chevron for name, stats, slots and links.</summary>
     Control Row()
     {
@@ -402,7 +427,7 @@ internal sealed class SaleCardPanel : UserControl
         var slotsLabel = Muted("Upgrade slots remaining");
         equip.Children.Add(slotsLabel);
         var slots = new TextBox { Width = 80, HorizontalAlignment = HorizontalAlignment.Left, [!TextBox.TextProperty] = new Binding(nameof(SaleItem.Slots)) { Mode = BindingMode.TwoWay } };
-        ToolTip.SetTip(slots, "The number beside Remaining Enhancements. Blank means unknown, not zero.");
+        ToolTip.SetTip(slots, "The number beside Remaining Enhancements. Blank means unknown. N/A means the tooltip has no upgrade slots.");
         equip.Children.Add(slots);
         var readTip = new Button { Content = "Read tooltip (5s)", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 4, 0, 0) };
         ToolTip.SetTip(readTip, "Click, then hover this copy of the item in the game. Keep the tooltip uncovered for five seconds.");
@@ -413,6 +438,10 @@ internal sealed class SaleCardPanel : UserControl
             try { await _engine.ReadEquipmentAsync(it); } finally { readTip.IsEnabled = true; }
         };
         equip.Children.Add(readTip);
+        var hideMissingTooltip = new CheckBox { Content = "Hide missing-tooltip message" };
+        hideMissingTooltip[!ToggleButton.IsCheckedProperty] = new Binding(nameof(SaleItem.HideMissingTooltip)) { Mode = BindingMode.TwoWay };
+        ToolTip.SetTip(hideMissingTooltip, "Hide the warning for this item. Recorded details still appear on the card.");
+        equip.Children.Add(hideMissingTooltip);
         details.Children.Add(equip);
         var links = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
         links.Children.Add(new TextBlock { Text = "Look it up:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 4), FontSize = 11 }.Themed(TextBlock.ForegroundProperty, ThemeTokens.TextMuted));
@@ -457,7 +486,12 @@ internal sealed class SaleCardPanel : UserControl
             catch (Exception ex) { _engine.Report("Couldn't read stats: " + ex.Message); }
             finally { readMissing.IsEnabled = true; RefreshList(); }
         };
-        var missingNotice = Stack(4, missingLabel, readMissing);
+        var hideWarning = new Button { Content = "Hide warning", HorizontalAlignment = HorizontalAlignment.Left };
+        hideWarning.Click += (_, _) =>
+        {
+            if (hideWarning.DataContext is SaleItem item) item.HideMissingTooltip = true;
+        };
+        var missingNotice = Stack(4, missingLabel, Wrap(readMissing, hideWarning));
         missingNotice.Margin = new Thickness(52, 6, 0, 4);
         missingNotice[!IsVisibleProperty] = new Binding(nameof(SaleItem.MissingStats));
         var border = new Border { Child = Stack(3, line, missingNotice, details), Padding = new Thickness(0, 12), BorderThickness = new Thickness(0, 0, 0, 1) }.Themed(Border.BorderBrushProperty, ThemeTokens.Border);
@@ -708,7 +742,7 @@ internal sealed class SaleCardPanel : UserControl
         { Replace(_selected, selected); _listDirty = false; }
         else _listDirty = true;
         _selectedTitle.Text = $"On your card · {allSelected.Count}";
-        _selectedEmpty.Text = _missingOnly && missing == 0 ? "All selected items have recorded stats." : allSelected.Count > 0 && selected.Count == 0 ? "No selected items match these filters." : "Sync or use + Add to put items on your card.";
+        _selectedEmpty.Text = _missingOnly && missing == 0 ? "No missing stats to review." : allSelected.Count > 0 && selected.Count == 0 ? "No selected items match these filters." : "Sync or use + Add to put items on your card.";
         _selectionHidden.IsVisible = S.HideSelling;
         _loading = true; _sellingOn.IsChecked = !S.HideSelling; _loading = false;
         _selectedEmpty.IsVisible = selected.Count == 0;
@@ -736,6 +770,7 @@ internal sealed class SaleCardPanel : UserControl
         if (key == _kindPricesFor) return;
         _kindPricesFor = key;
         _kindPrices.Children.Clear();
+        if (kinds.Count == 0) _kindPrices.Children.Add(Muted("Add selling items to adjust their prices by type."));
         foreach (var kind in kinds)
         {
             var (panel, slider, label) = PercentSlider(110,
@@ -752,7 +787,7 @@ internal sealed class SaleCardPanel : UserControl
             label.Click += (_, _) => slider.Value = 100;
             var name = new TextBlock { Text = kind, Width = 118, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis }
                 .Themed(TextBlock.ForegroundProperty, ThemeTokens.Text);
-            _kindPrices.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 0, 18, 4), Children = { name, panel } });
+            _kindPrices.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { name, panel } });
         }
     }
 
@@ -825,7 +860,6 @@ internal sealed class SaleCardPanel : UserControl
                        Stack(4, Muted("Order"), Choice(SaleCardEngine.Orders, () => S.Order, v => S.Order = v,
                            "The order of the tiles. By type keeps each kind together (weapons, armor, accessories, potions, scrolls, gems and ores…), related items side by side.")));
 
-        var pricing = new Expander { Header = "Price adjustments by item type", Content = _kindPrices };
         var tagColours = Stack(4,
             Muted("Tag colours"),
             ColourRow("SALE", () => S.SaleTagColour, v => S.SaleTagColour = v),
@@ -892,7 +926,7 @@ internal sealed class SaleCardPanel : UserControl
             Muted("Location"), Field(_location, v => S.Location = v), _locationNote,
             Muted("Card title"), Field(_title, v => S.Title = v),
             Wrap(manual, portrait),
-            Head("Look"), look, pricing,
+            Head("Look"), look,
             Head("Show on the card"), show,
             Head("Map"), map,
             Head("Footer"), footer));
@@ -1037,7 +1071,8 @@ internal sealed class SaleCardPanel : UserControl
         {
             _search.Text = S.Search;
             _prices.IsChecked = S.PricesShown;
-            _priceSlider.Value = Math.Clamp(S.PricePercent, 1, 200); _pricePercent.Content = Math.Clamp(S.PricePercent, 1, 200) + "%";
+            _tooltipWarnings.IsChecked = !S.HideMissingTooltipWarnings;
+            _priceSlider.Value = Math.Clamp(S.PricePercent, 1, 200);
             _seller.Text = S.Seller; _channel.Text = S.Channel; _server.Text = S.Server; _tagline.Text = S.Tagline ?? ""; _discord.Text = S.Discord ?? "";
             _location.Text = S.Location; _title.Text = S.Title;
             foreach (var (box, get) in _checks) box.IsChecked = get();
@@ -1142,6 +1177,7 @@ internal sealed class SaleCardPanel : UserControl
     {
         _render.Stop();
         if (TopLevel.GetTopLevel(this) == null) return;
+        _priceSlider.Value = Math.Clamp(S.PricePercent, 1, 200);
         RefreshList(); RefreshBuying(); RefreshCardEditor(); _render.Start();
     }
 
@@ -1229,18 +1265,6 @@ internal sealed class SaleCardPanel : UserControl
             _ctx.Notify($"Imported {count} items. Existing scanned items were kept.");
         }
         catch (Exception e) { _ctx.Notify("CSV import failed: " + e.Message); }
-    }
-
-    async Task CopyAsync()
-    {
-        RenderCard();
-        if (_card == null) return;
-        try
-        {
-            if (await _ctx.CopyImageAsync(_card.Value.frame)) _engine.Report("Image copied. Paste it into Discord with Ctrl+V." + _engine.MissingNote());
-            else _engine.Report("Copying pictures isn't supported on this system yet: use Save PNG… instead.");
-        }
-        catch (Exception e) { _engine.Report("Copy failed: " + e.Message); }
     }
 
     async Task SaveAsync()

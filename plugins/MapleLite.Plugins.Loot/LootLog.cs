@@ -37,17 +37,22 @@ public sealed class LootLog
     public string Folder { get; }
     public readonly List<LootRecord> Records = [];
     public int UnreadableLines { get; private set; }
+    readonly ItemNames? _names;
+    readonly Dictionary<(string Name, bool Truncated), string?> _resolved = new();
 
-    public LootLog(string folder)
+    public LootLog(string folder) : this(folder, null) { }
+
+    internal LootLog(string folder, ItemNames? names)
     {
         Folder = folder;
+        _names = names;
         Directory.CreateDirectory(folder);
         DailyFiles.SplitMonthly(folder, Prefix, Ext, TimeOf);
         foreach (var path in Directory.EnumerateFiles(folder, "loot-*.jsonl").Order())
             foreach (var line in File.ReadLines(path))
             {
                 if (line.Length == 0) continue;
-                try { if (JsonSerializer.Deserialize<LootRecord>(line) is { } r) Records.Add(r); }
+                try { if (JsonSerializer.Deserialize<LootRecord>(line) is { } r) Records.Add(ResolveName(r)); }
                 catch (JsonException) { UnreadableLines++; }
             }
         Records.Sort((a, b) => a.Time.CompareTo(b.Time));
@@ -61,10 +66,25 @@ public sealed class LootLog
         catch (JsonException) { return null; }
     }
 
-    public void Add(LootRecord r)
+    public void Add(LootRecord r) => Append(r);
+
+    internal LootRecord Append(LootRecord r)
     {
         File.AppendAllText(DailyFiles.PathFor(Folder, Prefix, Ext, r.Time), JsonSerializer.Serialize(r) + Environment.NewLine);
-        Records.Add(r);
+        var resolved = ResolveName(r);
+        Records.Add(resolved);
+        return resolved;
+    }
+
+    // Resolve saved OCR variants when loading the journal so totals, icons, recent rows and exports agree.
+    LootRecord ResolveName(LootRecord record)
+    {
+        if (_names == null || record.Kind != "Item" || string.IsNullOrWhiteSpace(record.Name)) return record;
+        bool truncated = ItemNames.IsTruncated(record.Name, record.Text);
+        var key = (record.Name, truncated);
+        if (!_resolved.TryGetValue(key, out var name))
+            _resolved[key] = name = _names.Match(record.Name, allowPartial: false, truncated: truncated);
+        return name != null && name != record.Name ? record with { Name = name } : record;
     }
 
     /// <summary>Where the MapleMemory app keeps its journal (Windows only).</summary>

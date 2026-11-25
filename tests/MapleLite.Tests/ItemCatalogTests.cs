@@ -1,4 +1,7 @@
 using MapleLite.Core.Game;
+using MapleLite.Core.Imaging;
+using MapleLite.Plugins.SaleCard;
+using MapleLite.Sdk;
 using Xunit;
 
 namespace MapleLite.Tests;
@@ -42,6 +45,32 @@ public class ItemCatalogTests
         var c = ItemCatalog.Load(Path.Combine(RepoRoot(), "src", "MapleLite.Core", "GameData", "Items"));
         Assert.True(c.Count > 1000, $"only {c.Count} items");
         Assert.NotNull(c.IconFolder);
+    }
+
+    [Fact]
+    public void ShopCardFindsTaniaCloakWithItsShippedIcon()
+    {
+        var catalog = ItemCatalog.Load(Path.Combine(RepoRoot(), "src", "MapleLite.Core", "GameData", "Items"));
+        var vision = new Vision(catalog);
+        var cloak = Assert.Single(CardSelection.CatalogMatches(vision.Catalog.Values, "tania cloak", null, new HashSet<int>()));
+        Assert.Equal(1107063, cloak.id);
+        Assert.Equal("Tania Cloak", cloak.name);
+        Assert.Equal("tania-cloak", cloak.slug);
+
+        var path = vision.IconPath(cloak.id);
+        Assert.NotNull(path);
+        var icon = FrameFiles.LoadPng(path, opaque: false);
+        var slot = new Frame(Vision.Slot, Vision.Slot);
+        const int background = unchecked((int)0xFFF4F4F4);
+        Array.Fill(slot.Px, background);
+        for (int y = 0; y < icon.H; y++)
+        for (int x = 0; x < icon.W; x++)
+        {
+            var pixel = icon.At(x, y);
+            if ((pixel >>> 24) >= 250) slot.Px[(y + 1) * slot.W + x + 1] = pixel;
+        }
+
+        Assert.Equal(cloak.id, vision.MatchAt(slot, 0, 0, background).id);
     }
 
     static string RepoRoot([System.Runtime.CompilerServices.CallerFilePath] string here = "") =>

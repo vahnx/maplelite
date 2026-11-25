@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Avalonia.Media;
+using MapleLite.Core.Game;
 
 namespace MapleLite.Plugins.SaleCard;
 
@@ -39,26 +40,35 @@ public sealed class SaleItem : INotifyPropertyChanged
     /// <summary>An item on your Buying list (from the item database, not read from the game).</summary>
     public bool IsWanted => Tab == SaleCardEngine.BuyTab;
     /// <summary>
-    /// Cards that carry stats: equipment always (with "not recorded" until read), scrolls once read, and items you're
-    /// buying when you've said what you want.
+    /// Cards with recorded details, buying requirements or a missing-tooltip message.
     /// </summary>
-    public bool ShowsDetails => IsWanted ? !string.IsNullOrWhiteSpace(Stats) || WantedSlots != null
-        : IsEquipment || (IsScroll && !string.IsNullOrWhiteSpace(Stats));
+    public bool ShowsDetails => DetailsText.Length != 0;
     int? WantedSlots => int.TryParse(Slots, out int n) && n >= 0 && n <= 99 ? n : null;
 
     string _stats = "", _slots = "", _rateNote = "";
     public string Stats { get => _stats; set => Set(ref _stats, value, nameof(Stats), nameof(DetailsText), nameof(MissingStats)); }
     public string Slots { get => _slots; set => Set(ref _slots, value, nameof(Slots), nameof(DetailsText), nameof(MissingStats)); }
+    bool _hideMissingTooltip;
+    public bool HideMissingTooltip { get => _hideMissingTooltip; set => Set(ref _hideMissingTooltip, value, nameof(HideMissingTooltip), nameof(DetailsText), nameof(MissingStats)); }
     /// <summary>What the monitor last wrote from a tooltip; anything else in Stats/Slots was typed by the user.</summary>
     public string AutoStats = "", AutoSlots = "";
     public string RateNote { get => _rateNote; set => Set(ref _rateNote, value); }
-    public bool MissingStats => !IsWanted && (IsEquipment ? !HasDetails : IsScroll && string.IsNullOrWhiteSpace(Stats));
-    public bool HasDetails => !string.IsNullOrWhiteSpace(Stats) && int.TryParse(Slots, out int n) && n >= 0 && n <= 99;
-    public string DetailsText => IsWanted ? WantedText
-        : IsEquipment
-        ? (string.IsNullOrWhiteSpace(Stats) ? "Tooltip not recorded — hover to read stats" : Stats.Trim()) + "\nSlots remaining: " +
-          (int.TryParse(Slots, out int n) && n >= 0 && n <= 99 ? n.ToString() : "not recorded")
-        : IsScroll ? Stats.Trim() : "";
+    bool CosmeticTooltip => Slots == EquipmentDetails.NoUpgradeSlots;
+    public bool MissingStats => !IsWanted && !HideMissingTooltip && (IsEquipment ? !HasDetails : IsScroll && string.IsNullOrWhiteSpace(Stats));
+    public bool HasDetails => !string.IsNullOrWhiteSpace(Stats) && (CosmeticTooltip || WantedSlots != null);
+    public string DetailsText => CardDetails();
+
+    internal string CardDetails(bool hideMissingTooltipWarnings = false)
+    {
+        if (IsWanted) return WantedText;
+        if (!IsEquipment) return IsScroll ? Stats.Trim() : "";
+        var stats = Stats.Trim();
+        if (CosmeticTooltip) return stats;
+        bool hideWarning = HideMissingTooltip || hideMissingTooltipWarnings;
+        if (stats.Length == 0 && !hideWarning) stats = "Tooltip not recorded — hover to read stats";
+        var slots = WantedSlots is int count ? $"Slots remaining: {count}" : hideWarning ? "" : "Slots remaining: not recorded";
+        return stats.Length == 0 ? slots : slots.Length == 0 ? stats : stats + "\n" + slots;
+    }
 
     /// <summary>What you want in an item you're buying, as the card shows it: "Wants:", your stat lines, and slots if set.</summary>
     public string WantedText

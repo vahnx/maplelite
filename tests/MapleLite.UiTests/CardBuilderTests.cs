@@ -13,6 +13,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using MapleLite.Core.Game;
 using MapleLite.Core.Capture;
+using MapleLite.Core.Imaging;
 using MapleLite.Host.Themes;
 using MapleLite.Plugins.SaleCard;
 using MapleLite.Sdk;
@@ -62,10 +63,12 @@ public class CardBuilderTests
     public class Context : DispatchProxy
     {
         public IPluginStorage Storage = null!;
+        public Func<Frame, Task<bool>>? Clipboard;
         protected override object? Invoke(MethodInfo? method, object?[]? args) => method!.Name switch
         {
             "get_Storage" => Storage,
             "get_Frames" => new EmptyFrames(),
+            "CopyImageAsync" => Clipboard?.Invoke((Frame)args![0]!) ?? Task.FromResult(false),
             "Log" => null,
             _ => throw new NotSupportedException(method.Name)
         };
@@ -83,10 +86,11 @@ public class CardBuilderTests
         public T Load<T>(string name) where T : new() => new();
         public void Save<T>(string name, T value) { }
     }
-    static (Window window, SaleCardPanel panel, SaleCardEngine engine) Open()
+    static (Window window, SaleCardPanel panel, SaleCardEngine engine) Open(Func<Frame, Task<bool>>? clipboard = null)
     {
         var context = DispatchProxy.Create<IPluginContext, Context>();
         ((Context)(object)context).Storage = new Storage(Path.Combine(Path.GetTempPath(), "MapleLite-ui-tests", Guid.NewGuid().ToString("N")));
+        ((Context)(object)context).Clipboard = clipboard;
         var catalog = ItemCatalog.Load(Path.Combine(AppContext.BaseDirectory, "GameData", "Items"));
         Assert.True(catalog.Count > 100);
         var engine = new SaleCardEngine(context) { Vision = new Vision(catalog) };
@@ -117,6 +121,7 @@ public class CardBuilderTests
         var point = button.TranslatePoint(new Point(button.Bounds.Width / 2, button.Bounds.Height / 2), window)!.Value;
         window.MouseDown(point, MouseButton.Left); window.MouseUp(point, MouseButton.Left); Pump();
     }
+
     static void Capture(Window window, string name)
     {
         var panel = window.Content as SaleCardPanel;
@@ -128,6 +133,62 @@ public class CardBuilderTests
         Directory.CreateDirectory(folder);
         using var frame = window.CaptureRenderedFrame();
         Assert.NotNull(frame); frame.Save(Path.Combine(folder, name + ".png"));
+    }
+
+    [AvaloniaFact]
+    public void Preview_price_adjustments_flyout_keeps_the_item_type_sliders_and_reset()
+    {
+        var (window, panel, engine) = Open();
+        try
+        {
+            var button = Visible<Button>(panel).Single(button => Equals(button.Content, "Price adjustments…"));
+            var flyout = Assert.IsType<Flyout>(button.Flyout);
+            button.BringIntoView();
+            Pump();
+            Click(window, button);
+            Assert.True(flyout.IsOpen);
+            var scroll = Assert.IsType<ScrollViewer>(flyout.Content);
+            var kinds = Assert.IsType<StackPanel>(scroll.Content);
+            var armor = Assert.Single(kinds.Children.OfType<StackPanel>(), row => row.Children.OfType<TextBlock>().Any(text => text.Text == "Armor"));
+            Assert.Single(Visible<Slider>(armor)).Value = 96;
+            Assert.Equal(96, engine.KindPercent("Armor"));
+            Assert.Single(Visible<Button>(armor), reset => Equals(reset.Content, "96%"))
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(100, engine.KindPercent("Armor"));
+            flyout.Hide();
+        }
+        finally { window.Close(); }
+    }
+
+    [AvaloniaFact]
+    public void Popout_price_slider_stays_in_sync_and_copy_renders_the_latest_adjustment()
+    {
+        Frame? copied = null;
+        var (window, panel, engine) = Open(clipboard: frame => { copied = frame; return Task.FromResult(true); });
+        try
+        {
+            engine.S.NoTime = true;
+            Visible<Button>(panel).Single(button => Equals(button.Content, "Pop out ↗")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Pump();
+            var popout = Assert.IsType<CardPopout>(Assert.Single(window.OwnedWindows));
+            Slider OverallSlider(Control root) => Visible<Slider>(root).Single(slider => AutomationProperties.GetName(slider) == "Overall card price adjustment");
+            var mainSlider = OverallSlider(panel);
+            var popoutSlider = OverallSlider(popout);
+            mainSlider.Value = 92;
+            Pump();
+            Assert.Equal(92, popoutSlider.Value);
+            popoutSlider.Value = 81;
+            var copy = Visible<Button>(popout).Single(button => Equals(button.Content, "Copy image"));
+            copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Pump();
+            Assert.Equal(81, mainSlider.Value);
+            var (items, options) = engine.Card();
+            Assert.Equal(0.81, options.PriceScale);
+            var (frame, bitmap) = CardRenderer.Render(items, options);
+            using (bitmap) Assert.Equal(frame.Px, Assert.IsType<Frame>(copied).Px);
+            Assert.Equal("800", engine.Items.Single(item => item.Name == "Emerald Ore").Custom);
+        }
+        finally { window.Close(); }
     }
 
     [AvaloniaFact]
@@ -298,6 +359,34 @@ public class CardBuilderTests
         finally { window.Close(); }
     }
     [AvaloniaFact]
+    public void Card_wide_tooltip_warning_switch_sits_beside_prices_and_preserves_recorded_details()
+    {
+        var (window, panel, engine) = Open();
+        try
+        {
+            var prices = Visible<ToggleSwitch>(panel).Single(control => Equals(control.OffContent, "Prices hidden"));
+            var warnings = Visible<ToggleSwitch>(panel).Single(control => Equals(control.OffContent, "Tooltip warnings hidden"));
+            var toolbar = Assert.IsType<WrapPanel>(prices.Parent);
+            Assert.Same(warnings, toolbar.Children[toolbar.Children.IndexOf(prices) + 1]);
+            Assert.True(warnings.IsChecked);
+
+            warnings.IsChecked = false;
+            var (_, hidden) = engine.Card();
+            Assert.True(hidden.HideMissingTooltipWarnings);
+            Assert.True(hidden.Stats);
+            var item = new SaleItem { ItemId = 1032009, Tab = "Equip", Name = "Earrings", Stats = "Magic Def: +30" };
+            Assert.Equal("Magic Def: +30", item.CardDetails(hidden.HideMissingTooltipWarnings));
+            Assert.True(item.MissingStats);
+
+            warnings.IsChecked = true;
+            var (_, shown) = engine.Card();
+            Assert.False(shown.HideMissingTooltipWarnings);
+            Assert.Contains("Slots remaining: not recorded", item.CardDetails(shown.HideMissingTooltipWarnings));
+        }
+        finally { window.Close(); }
+    }
+
+    [AvaloniaFact]
     public void Missing_stats_notice_filters_and_clears_when_stats_are_entered()
     {
         var (window, panel, engine) = Open();
@@ -310,9 +399,14 @@ public class CardBuilderTests
             Assert.Contains(Visible<Button>(panel), b => b.Content as string == "Read stats (5s)");
             Assert.Contains(Visible<Button>(panel), b => b.Content as string == "Enter stats");
             Capture(window, "missing-stats");
+            var hide = Visible<Button>(panel).First(b => b.Content as string == "Hide warning");
+            var hidden = Assert.IsType<SaleItem>(hide.DataContext);
+            Click(window, hide);
+            Assert.True(hidden.HideMissingTooltip);
+            Assert.DoesNotContain("Tooltip not recorded", hidden.DetailsText);
             foreach (var item in missing) { item.Stats = "Magic Def: +30"; item.Slots = "5"; }
             Pump();
-            Assert.Contains(Visible<TextBlock>(panel), t => t.Text == "All selected items have recorded stats.");
+            Assert.Contains(Visible<TextBlock>(panel), t => t.Text == "No missing stats to review.");
         }
         finally { window.Close(); }
     }

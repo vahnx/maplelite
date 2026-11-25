@@ -227,6 +227,54 @@ public class SaleCardManualTests
         Assert.False(Assert.Single(e.Items).Include);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Confirmed_inventory_move_selects_the_same_shop_bundle_and_flags_a_price_difference(bool shopFirst)
+    {
+        var e = Engine();
+        e.S.ShopOpen = true;
+        var gone = new SaleItem { Key = $"Use:{Scroll.id}:1:1", ItemId = Scroll.id, Tab = "Use", Qty = "1", Custom = "1k" };
+        var extra = new SaleItem { Key = $"Use:{Scroll.id}:1:15", ItemId = Scroll.id, Tab = "Use", Qty = "15", Custom = "1k", Include = false };
+        e.Items.Add(gone);
+        e.Items.Add(extra);
+        var shop = new ShopRead { Seller = "Test", IsOwnerView = true, Rows = [new(Scroll.id, "Scroll", 1, 64999, 1, "")] };
+        if (shopFirst)
+        {
+            e.ImportOwnShop(shop);
+            Assert.False(Assert.Single(e.Items, item => item.InShop).Include);
+        }
+
+        e.ConfirmInventoryDeparture(gone);
+        e.Items.Remove(gone);
+        if (!shopFirst) e.ImportOwnShop(shop);
+
+        var listing = Assert.Single(e.Items, item => item.InShop);
+        Assert.True(listing.Include);
+        Assert.Equal("64999", listing.Custom);
+        Assert.True(listing.PriceFlagged);
+        Assert.False(extra.Include);
+        Assert.Same(listing, Assert.Single(e.Card().items));
+        e.SetIncluded([extra], true);
+        Assert.Equal(2, e.Card().items.Count);
+        Assert.Equal(1, e.Card().items.Single(item => item.InShop).Pieces);
+    }
+
+    [Theory]
+    [InlineData(1, 2)]
+    [InlineData(2, 1)]
+    public void Confirmed_move_leaves_ambiguous_or_different_shop_bundles_available(int bundle, int copies)
+    {
+        var e = Engine();
+        e.S.ShopOpen = true;
+        var gone = new SaleItem { Key = $"Use:{Scroll.id}:1:1", ItemId = Scroll.id, Tab = "Use", Qty = "1" };
+        e.ConfirmInventoryDeparture(gone);
+        e.ImportOwnShop(new ShopRead { Seller = "Test", IsOwnerView = true,
+            Rows = Enumerable.Repeat(new ShopRow(Scroll.id, "Scroll", bundle, 100, 1, ""), copies).ToList() });
+        Assert.Equal(copies, e.Items.Count);
+        Assert.All(e.Items, item => Assert.False(item.Include));
+    }
+
     [Fact]
     public void Available_filters_keep_manual_source_distinct_and_exclude_selected_and_buying()
     {
@@ -279,6 +327,28 @@ public class SaleCardManualTests
         item.Slots = ""; item.Tab = SaleCardEngine.BuyTab; Assert.False(item.MissingStats);
         item.Tab = "Use"; item.ItemId = 2040000; item.Stats = ""; Assert.True(item.MissingStats);
         item.Stats = "Success rate: 60%"; Assert.False(item.MissingStats);
+    }
+
+    [Fact]
+    public void Hiding_the_tooltip_warning_survives_restart_and_preserves_recorded_details()
+    {
+        var engine = Engine();
+        var card = engine.AddByHand(new CatalogItem { id = 1107063, name = "Tania Cloak", slug = "tania-cloak" });
+        Assert.Contains("Tooltip not recorded", card.DetailsText);
+        card.HideMissingTooltip = true;
+        engine.SaveSession();
+
+        var saved = Assert.Single(Engine(engine.DataFolder).Items);
+        Assert.True(saved.HideMissingTooltip);
+        Assert.False(saved.MissingStats);
+        Assert.False(saved.ShowsDetails);
+        saved.Stats = "Type: Cape\nCannot be traded once equipped";
+        saved.Slots = EquipmentDetails.NoUpgradeSlots;
+        Assert.True(saved.HasDetails);
+        Assert.Equal(saved.Stats, saved.DetailsText);
+        saved.HideMissingTooltip = false;
+        Assert.False(saved.MissingStats);
+        Assert.Equal(saved.Stats, saved.DetailsText);
     }
 
 }

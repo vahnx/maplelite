@@ -18,6 +18,7 @@ internal sealed class CardPopout : Window
     readonly Viewbox _view = new() { Stretch = Stretch.Uniform };
     readonly ScrollViewer _scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
     readonly TextBlock _notice = Muted("");
+    readonly Slider _priceSlider;
     readonly DispatcherTimer _render = new() { Interval = TimeSpan.FromMilliseconds(180) };
     Bitmap? _bitmap;
     TextBox? _editing;
@@ -42,8 +43,11 @@ internal sealed class CardPopout : Window
             _scroll.IsVisible = zoom.IsChecked == true;
             _view.IsVisible = !_scroll.IsVisible;
         };
+        var (priceBar, priceSlider) = SaleCardPanel.CardPriceSlider(engine);
+        _priceSlider = priceSlider;
+        var copy = Button("Copy image", async () => _notice.Text = await _engine.CopyCardImageAsync(), accent: true);
         var close = Button("Close popout", Close);
-        var bar = Wrap(zoom, close, _notice);
+        var bar = Wrap(priceBar, copy, zoom, close, _notice);
         bar.Margin = new Thickness(10, 6);
         DockPanel.SetDock(bar, Dock.Top);
         _view.Child = _surface;
@@ -64,7 +68,9 @@ internal sealed class CardPopout : Window
 
     void OnCardChanged() => Dispatcher.UIThread.Post(() =>
     {
-        if (_closed || _editing != null || _render.IsEnabled) return;
+        if (_closed) return;
+        _priceSlider.Value = Math.Clamp(_engine.S.PricePercent, 1, 200);
+        if (_editing != null || _render.IsEnabled) return;
         _render.Start();
     });
 

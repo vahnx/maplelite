@@ -15,6 +15,7 @@ public sealed class SavedItem
     /// <summary>You picked the item yourself (added by hand or corrected): tooltips never rename it.</summary>
     public bool Picked { get; set; }
     public bool PriceFlagged { get; set; }
+    public bool HideMissingTooltip { get; set; }
     public string? Icon { get; set; }   // picture of an unrecognised item (32x32 BGRA, base64)
 }
 
@@ -46,6 +47,7 @@ public sealed class Session
     /// <summary>Compact tiles are the default. CompactDefaulted marks a session that has had that default applied once.</summary>
     public bool CompactTiles { get; set; } = true; public bool CompactDefaulted { get; set; }
     public bool HideOffer { get; set; } public bool NoStats { get; set; } public bool NoTime { get; set; }
+    public bool HideMissingTooltipWarnings { get; set; }
     /// <summary>Tag items live in your Free Market shop, and say how to buy the rest (Discord or a whisper). On unless unticked.</summary>
     public bool NoShopMarker { get; set; }
     /// <summary>Your Discord name for the card's "how to buy" line; empty leaves it as "DM me on Discord".</summary>

@@ -5,7 +5,10 @@ using MapleLite.Core.Ocr;
 namespace MapleLite.Core.Game;
 
 /// <summary>An equipment tooltip as read: its stat lines (one per line, as the game spells them) and remaining upgrade slots.</summary>
-public sealed record EquipmentDetails(string Stats, string Slots, IReadOnlyList<string> LinesRead);
+public sealed record EquipmentDetails(string Stats, string Slots, IReadOnlyList<string> LinesRead)
+{
+    public const string NoUpgradeSlots = "N/A";
+}
 
 /// <summary>
 /// Reads equipment tooltips from the game picture: the stat lines between "Type:" and "Remaining Enhancements", which
@@ -69,7 +72,7 @@ public static class EquipmentReader
     /// (see <see cref="AllAsync"/>). Without a pick, nothing is returned: stats are never guessed.
     /// </summary>
     public static async Task<(EquipmentDetails? details, string why)> ReadWhyAsync(IOcr ocr, Frame frame, string name,
-        Func<IReadOnlyList<EquipmentDetails>, EquipmentDetails?>? choose = null)
+        Func<IReadOnlyList<EquipmentDetails>, EquipmentDetails?>? choose = null, bool allowCosmetic = false)
     {
         if (string.IsNullOrWhiteSpace(name)) return (null, "no item name");
         if (!ocr.Available) return (null, "no text reader is available");
@@ -81,10 +84,11 @@ public static class EquipmentReader
         foreach (var title in candidates)
         {
             var end = EndOf(overview, title);
-            if (end == null) { noEnd++; continue; }
-            var details = await ReadBox(ocr, frame, overview, title, end);
+            if (end == null) noEnd++;
+            var details = end != null ? await ReadBox(ocr, frame, overview, title, end)
+                : allowCosmetic ? await ReadCosmeticBox(ocr, frame, overview, title) : null;
             if (details != null && !results.Any(d => Profile(d.Stats, d.Slots) == Profile(details.Stats, details.Slots) && d.LinesRead.SequenceEqual(details.LinesRead))) results.Add(details);
-            else if (details == null) unparsed++;
+            else if (details == null && end != null) unparsed++;
         }
         if (results.Count == 1) return (results[0], "");
         if (results.Count > 1)
@@ -139,6 +143,32 @@ public static class EquipmentReader
         overview.Where(l => l.Cy() > title.Cy() && l.Cy() < title.Cy() + 500 &&
             Math.Abs(l.Left() - title.Left()) < 25 && IsLastLine(l.Text))
             .OrderBy(l => l.Cy()).FirstOrDefault();
+
+    static async Task<EquipmentDetails?> ReadCosmeticBox(IOcr ocr, Frame frame, IReadOnlyList<OcrLine> overview, OcrLine title)
+    {
+        var type = overview.FirstOrDefault(line => line.Cy() > title.Cy() + 70 && line.Cy() < title.Cy() + 190 &&
+            Math.Abs(line.Left() - title.Left()) < 18 && TypeLine.IsMatch(Clean(line.Text)));
+        if (type == null) return null;
+        int x = Math.Max(0, (int)title.Left() - 4), y = Math.Max(0, (int)type.Cy() - 17);
+        var region = new Region(x, y, Math.Min(226, frame.W - x), Math.Min(96, frame.H - y));
+        var rows = await ocr.ReadTextRowsAsync(frame, region, p => Pixel.Max(p) >= 160);
+        var read = rows.Select(row => row.Text).ToArray();
+        return ParseCosmetic(read);
+    }
+
+    static readonly Regex TypeLine = new(@"^Type\s*:\s*(?<type>[A-Za-z]+(?:[ -][A-Za-z]+){0,3})\s*$", RegexOptions.IgnoreCase);
+
+    internal static EquipmentDetails? ParseCosmetic(IReadOnlyList<string> lines)
+    {
+        if (lines.Any(IsLastLine)) return null;
+        var type = lines.Select(line => TypeLine.Match(Clean(line))).FirstOrDefault(match => match.Success);
+        if (type == null) return null;
+        string text = Key(string.Join(" ", lines));
+        // Aurora cosmetics use a trade disclaimer in place of the stat and enhancement block.
+        if (!text.Contains("CANNOTBETRADEDONCE", StringComparison.Ordinal) ||
+            !text.Contains("BEENEQUIPPED", StringComparison.Ordinal) || !text.Contains("AURORASTAMP", StringComparison.Ordinal)) return null;
+        return new($"Type: {type.Groups["type"].Value}\nCannot be traded once equipped", EquipmentDetails.NoUpgradeSlots, lines);
+    }
 
     /// <summary>Reads one tooltip box, from its title line down to its "Remaining Enhancements" line.</summary>
     static async Task<EquipmentDetails?> ReadBox(IOcr ocr, Frame frame, IReadOnlyList<OcrLine> overview, OcrLine title, OcrLine end)
