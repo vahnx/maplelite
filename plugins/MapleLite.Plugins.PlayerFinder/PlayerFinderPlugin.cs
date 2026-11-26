@@ -1,8 +1,11 @@
 using System.Globalization;
+using System.Text;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using MapleLite.Core.Capture;
 using MapleLite.Core.Imaging;
@@ -35,6 +38,8 @@ public sealed class PlayerFinderPlugin : IPlugin
     readonly Dictionary<string, DateTimeOffset> _encounters = new(StringComparer.OrdinalIgnoreCase);
     readonly NearbyRoster _nearbyRoster = new();
     readonly Dictionary<string, TextBlock> _watchDetails = new(StringComparer.OrdinalIgnoreCase);
+    readonly Dictionary<string, string> _notes = new(StringComparer.OrdinalIgnoreCase);
+    readonly DispatcherTimer _noteSave = new() { Interval = TimeSpan.FromMilliseconds(500) };
     IPluginContext _context = null!;
     volatile Settings _settings = new();
     volatile string? _picked;
@@ -48,13 +53,15 @@ public sealed class PlayerFinderPlugin : IPlugin
     DateTimeOffset _alertUntil;
     DateTimeOffset _savedAt;
     bool _seenChanged;
+    bool _notesChanged;
 
     ComboBox? _nearby;
     TextBlock? _status;
     TextBlock? _matches;
+    TextBlock? _noteStatus;
     Image? _preview;
     StackPanel? _watchRows;
-    Button? _addNearby, _clearPick;
+    Button? _addNearby, _clearPick, _exportWatchlist;
     WriteableBitmap? _bitmap;
     bool _syncPicker;
 
@@ -64,6 +71,9 @@ public sealed class PlayerFinderPlugin : IPlugin
         _settings = context.Storage.Load<Settings>("settings");
         foreach (var (name, sighting) in context.Storage.Load<Dictionary<string, LastSeen>>("last-seen"))
             _seen[name] = sighting;
+        foreach (var (name, note) in context.Storage.Load<Dictionary<string, string>>("notes"))
+            _notes[name] = note;
+        _noteSave.Tick += (_, _) => AutosaveNotes();
         _frames = context.Frames.Subscribe(TrackChat, 8);
         _worker = Task.Run(() => RunAsync(_stop.Token));
         return Task.CompletedTask;
@@ -73,16 +83,20 @@ public sealed class PlayerFinderPlugin : IPlugin
     {
         _frames?.Dispose();
         _stop.Cancel();
-        if (_worker != null) await _worker.ConfigureAwait(false);
-        lock (_gate) SaveSightings();
-        _context.Overlay.Clear();
-        await Dispatcher.UIThread.InvokeAsync(() =>
+        try { await Dispatcher.UIThread.InvokeAsync(SaveNotes); }
+        finally
         {
-            if (_preview != null) _preview.Source = null;
-            _bitmap?.Dispose();
-            _bitmap = null;
-        });
-        _stop.Dispose();
+            if (_worker != null) await _worker.ConfigureAwait(false);
+            lock (_gate) SaveSightings();
+            _context.Overlay.Clear();
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (_preview != null) _preview.Source = null;
+                _bitmap?.Dispose();
+                _bitmap = null;
+            });
+            _stop.Dispose();
+        }
     }
 
     public Control CreatePanel()
@@ -93,7 +107,10 @@ public sealed class PlayerFinderPlugin : IPlugin
         _status = PanelKit.Muted("Waiting for a scan…");
         _matches = PanelKit.Text("");
         _preview = new Image { Height = 130, Stretch = Stretch.Uniform, IsVisible = false };
+        _noteStatus = PanelKit.Muted(_notesChanged ? "Notes have unsaved changes." : "");
+        _noteStatus.IsVisible = _notesChanged;
         _watchRows = new StackPanel { Spacing = 8 };
+        _exportWatchlist = PanelKit.Button("Export CSV…", async () => await ExportWatchlistAsync());
         PopulateWatchlist();
 
         void AddTyped()
@@ -152,8 +169,8 @@ public sealed class PlayerFinderPlugin : IPlugin
                     Change(_settings with { Nearby = value });
                 }), nearbyControls)),
             PanelKit.Card(PanelKit.Stack(8, PanelKit.Title("Watchlist"),
-                PanelKit.Wrap(input, PanelKit.Button("+ Add to watchlist", AddTyped, accent: true)),
-                error, _watchRows, Option("Notify when a watched player appears", _settings.Notify,
+                PanelKit.Wrap(input, PanelKit.Button("+ Add to watchlist", AddTyped, accent: true), _exportWatchlist),
+                error, _watchRows, _noteStatus, Option("Notify when a watched player appears", _settings.Notify,
                     value => Change(_settings with { Notify = value })),
                 PanelKit.Muted("Channel comes from MapleLite’s last read of the game’s Change Channel window."))),
             PanelKit.Card(PanelKit.Stack(8, _status, _matches, _preview)),
@@ -184,10 +201,104 @@ public sealed class PlayerFinderPlugin : IPlugin
             DockPanel.SetDock(remove, Dock.Right);
             row.Children.Add(remove);
             row.Children.Add(PanelKit.Stack(2, PanelKit.Text(name), details));
-            _watchRows.Children.Add(row);
+            var note = new TextBox
+            {
+                Text = _notes.GetValueOrDefault(name), Watermark = "Add a note…",
+                AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 112,
+            };
+            AutomationProperties.SetName(note, $"Note for {name}");
+            note.PropertyChanged += (_, e) =>
+            {
+                if (e.Property != TextBox.TextProperty || _stop.IsCancellationRequested) return;
+                var value = note.Text ?? "";
+                if (value == _notes.GetValueOrDefault(name, "")) return;
+                if (value.Length == 0) _notes.Remove(name);
+                else _notes[name] = value;
+                _notesChanged = true;
+                ShowNoteStatus("Saving notes…");
+                _noteSave.Stop();
+                _noteSave.Start();
+            };
+            _watchRows.Children.Add(PanelKit.Stack(4, row, note));
         }
         if (_watchRows.Children.Count == 0) _watchRows.Children.Add(PanelKit.Muted("No watched players yet."));
+        if (_exportWatchlist != null) _exportWatchlist.IsEnabled = _settings.Names.Length > 0;
         lock (_gate) UpdateWatchDetails(_seen);
+    }
+
+    async Task ExportWatchlistAsync()
+    {
+        if (TopLevel.GetTopLevel(_exportWatchlist) is not { } top) return;
+        try
+        {
+            var file = await top.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "Export Player Finder watchlist",
+                SuggestedFileName = $"PlayerFinder-Watchlist-{DateTime.Now:yyyyMMdd-HHmm}.csv",
+                DefaultExtension = "csv",
+                FileTypeChoices = [new FilePickerFileType("CSV file") { Patterns = ["*.csv"] }],
+            });
+            if (file?.TryGetLocalPath() is not { } path) return;
+
+            string[] lines;
+            lock (_gate)
+            {
+                lines = ["Name,Last Seen,Map,Channel,Notes", .. _settings.Names.Select(name =>
+                {
+                    var last = _seen.GetValueOrDefault(name);
+                    return string.Join(",",
+                        CsvField(name),
+                        CsvField(last?.At.ToString("O", CultureInfo.InvariantCulture)),
+                        CsvField(last?.Location),
+                        CsvField(last?.Channel?.ToString(CultureInfo.InvariantCulture)),
+                        CsvField(_notes.GetValueOrDefault(name)));
+                })];
+            }
+            await File.WriteAllLinesAsync(path, lines, new UTF8Encoding(true));
+            _context.Notify("Exported watchlist to " + Path.GetFileName(path));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            _context.Log("Player Finder could not export the watchlist: " + e.Message);
+            _context.Notify("Could not export the watchlist. " + e.Message);
+        }
+    }
+
+    static string CsvField(string? value)
+    {
+        value ??= "";
+        // Keep spreadsheet apps from treating free-text fields as formulas.
+        var trimmed = value.AsSpan().TrimStart();
+        if ((value.Length > 0 && value[0] is '\t' or '\r' or '\n') ||
+            (trimmed.Length > 0 && trimmed[0] is '=' or '+' or '-' or '@'))
+            value = "'" + value;
+        return "\"" + value.Replace("\"", "\"\"") + "\"";
+    }
+
+    void ShowNoteStatus(string message)
+    {
+        if (_noteStatus == null) return;
+        _noteStatus.Text = message;
+        _noteStatus.IsVisible = message.Length > 0;
+    }
+
+    void SaveNotes()
+    {
+        _noteSave.Stop();
+        if (!_notesChanged) return;
+        _context.Storage.Save("notes", _notes);
+        _notesChanged = false;
+        ShowNoteStatus("");
+    }
+
+    void AutosaveNotes()
+    {
+        try { SaveNotes(); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            ShowNoteStatus("Could not save notes. " + e.Message);
+            _context.Log("Player Finder could not save notes: " + e.Message);
+        }
     }
 
     void UpdateWatchDetails(IReadOnlyDictionary<string, LastSeen> seen)

@@ -49,11 +49,52 @@ internal sealed class SnipWindow : Window
         KeyDown += (_, e) => { if (e.Key == Key.Escape) Close(); };
     }
 
-    public static async Task<int[]?> SelectAsync(Window owner, Frame frame)
+    /// <summary>
+    /// Shows the picture to draw on. With <paramref name="find"/>, characters found by their name tag (as Player Finder
+    /// does) are outlined too, yours highlighted: clicking one takes its portrait without drawing.
+    /// </summary>
+    public static async Task<int[]?> SelectAsync(Window owner, Frame frame, Func<Task<List<Nameplate>>>? find = null, string ownName = "")
     {
         var w = new SnipWindow(frame);
+        if (find != null) w.Opened += async (_, _) => await w.ShowFoundAsync(find, ownName.Trim());
         await w.ShowDialog(owner);
         return w._result;
+    }
+
+    async Task ShowFoundAsync(Func<Task<List<Nameplate>>> find, string ownName)
+    {
+        _hint.Text = "Looking for characters by their name tags…";
+        List<Nameplate> found;
+        try { found = await find(); }
+        catch (Exception) { found = []; }
+        if (!IsVisible || _result != null) return;
+        bool mine = found.Any(p => p.Name.Equals(ownName, StringComparison.OrdinalIgnoreCase));
+        // Yours first in the list and drawn last, so it sits on top where tags overlap.
+        foreach (var p in found.OrderBy(p => p.Name.Equals(ownName, StringComparison.OrdinalIgnoreCase)))
+            AddChoice(p, p.Name.Equals(ownName, StringComparison.OrdinalIgnoreCase));
+        _hint.Text = found.Count == 0 ? "No name tags found. Drag a box around your character. Escape cancels."
+            : mine ? $"Click {ownName} (outlined) to use that character, or drag your own box. Escape cancels."
+            : "Click a character outlined by its name tag, or drag your own box. Escape cancels.";
+    }
+
+    void AddChoice(Nameplate p, bool own)
+    {
+        var colour = own ? Color.FromRgb(255, 200, 40) : Color.FromRgb(120, 200, 255);
+        // A little room on each side for hats, capes and weapons that reach past the usual box.
+        var box = new Region(p.Character.X - 8, p.Character.Y - 10, p.Character.Width + 16, p.Character.Height + 10).Intersect(_frame.Bounds);
+        var outline = new Border
+        {
+            Width = box.Width, Height = box.Height, BorderThickness = new Thickness(own ? 3 : 2), BorderBrush = new SolidColorBrush(colour),
+            Background = new SolidColorBrush(Color.FromArgb(own ? (byte)40 : (byte)18, colour.R, colour.G, colour.B)), Cursor = new Cursor(StandardCursorType.Hand),
+        };
+        ToolTip.SetTip(outline, $"Use {p.Name}'s character as the portrait");
+        outline.PointerPressed += (_, e) => { e.Handled = true; _result = Fit(_frame, box.X, box.Y, box.Width, box.Height, 0); Close(); };
+        Canvas.SetLeft(outline, box.X); Canvas.SetTop(outline, box.Y);
+        _canvas.Children.Add(outline);
+        var label = new Border { Background = new SolidColorBrush(colour), Padding = new Thickness(4, 1), IsHitTestVisible = false,
+            Child = new TextBlock { Text = p.Name, Foreground = Brushes.Black, FontSize = 11, FontWeight = FontWeight.Bold } };
+        Canvas.SetLeft(label, box.X); Canvas.SetTop(label, Math.Max(0, box.Y - 17));
+        _canvas.Children.Add(label);
     }
 
     void Down(object? s, PointerPressedEventArgs e)

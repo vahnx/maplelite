@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Avalonia.Threading;
 using MapleLite.Core.Capture;
 using MapleLite.Core.Imaging;
@@ -19,7 +20,8 @@ internal sealed class MemoryEngine
     readonly DispatcherTimer _tick = new() { Interval = TimeSpan.FromMilliseconds(500) };
     readonly DispatcherTimer _retry = new() { Interval = TimeSpan.FromSeconds(5) };
     ChatPipeline? _pipeline;
-    bool _stopping, _detecting;
+    Task? _pause;
+    bool _closed, _detecting;
 
     public Journal Journal { get; }
     public Settings Settings { get; }
@@ -36,16 +38,14 @@ internal sealed class MemoryEngine
         _ctx = ctx;
         _reader = new ChatReader(ctx.Ocr);
         Settings = ctx.Storage.Load<Settings>("settings");
-        var imported = ImportFromAppOnce();
         Journal = new Journal(ctx.Storage.Folder);
         ClockZone.Zone = ClockZone.Find(Settings.TimeZoneId);
         MessageParser.StripTrailingAt = Settings.StripTrailingAt;
         foreach (var e in Journal.Entries.Where(e => e.Time >= DateTimeOffset.Now - SpamFilter.Window)) { _spam.Remember(e); _partials.Remember(e); }
         PublishArea();
         _tick.Tick += (_, _) => Tick();
-        _retry.Tick += async (_, _) => { if (!Running && !_stopping && !_detecting) await AutoStartAsync(); };
+        _retry.Tick += async (_, _) => { if (!_detecting) await AutoStartAsync(); };
         Status = Settings.Chat == null ? "Looking for the chat box. Keep chat scrolled to the newest messages." : "Ready. Your saved chat area will be used.";
-        if (imported.lines > 0) Status = $"Imported {imported.lines:N0} messages from the MapleMemory app. " + Status;
         if (Journal.UnreadableLines > 0) Status += $" {Journal.UnreadableLines} damaged log lines were skipped (files preserved).";
     }
 
@@ -57,47 +57,15 @@ internal sealed class MemoryEngine
         if (Settings.Chat is { } c) _ctx.Events.Publish(new ChatAreaEvent(c.ToRegion(), Settings.FrameWidth, Settings.FrameHeight, _ctx.Manifest.Id));
     }
 
-    (int files, int lines) ImportFromAppOnce()
-    {
-        if (Settings.ImportChecked) return (0, 0);
-        var result = (0, 0);
-        try
-        {
-            result = Journal.Import(Journal.AppFolder, _ctx.Storage.Folder);
-            if (Settings.Chat == null && Journal.AppSettings(Journal.AppFolder) is { } app)
-            {
-                Settings.Chat = app.Chat; Settings.FrameWidth = app.FrameWidth; Settings.FrameHeight = app.FrameHeight;
-                Settings.ManualChat = app.ManualChat; Settings.SuppressSpam = app.SuppressSpam; Settings.StripTrailingAt = app.StripTrailingAt;
-                Settings.ShowGameTime = app.ShowGameTime; Settings.TimeZoneId = app.TimeZoneId;
-            }
-        }
-        catch (IOException e) { _ctx.Log("import failed: " + e.Message); }
-        Settings.ImportChecked = true;
-        SaveSettings();
-        return result;
-    }
-
-    /// <summary>Imports again (only lines not already in the journal), then reloads it.</summary>
-    public int ImportAgain()
-    {
-        var (_, lines) = Journal.Import(Journal.AppFolder, _ctx.Storage.Folder);
-        if (lines > 0)
-        {
-            var fresh = new Journal(_ctx.Storage.Folder);
-            Journal.Entries.Clear();
-            Journal.Entries.AddRange(fresh.Entries);
-        }
-        SetStatus(lines > 0 ? $"Imported {lines:N0} more messages from the MapleMemory app." : "Nothing new to import from the MapleMemory app.");
-        return lines;
-    }
-
     void SetStatus(string s) { Status = s; Changed?.Invoke(); }
 
     /// <summary>On plugin start: find the chat area (unless one was chosen by hand) and start logging, retrying every 5 s.</summary>
     public async Task AutoStartAsync()
     {
-        if (Running || _stopping) return;
-        if (!Settings.ManualChat && !await DetectChatAsync()) { _retry.Start(); return; }
+        if (_closed || Running || _pause is { IsCompleted: false }) return;
+        bool found = Settings.ManualChat || await DetectChatAsync();
+        if (_closed) return;
+        if (!found) { _retry.Start(); return; }
         if (Settings.Chat == null) { SetStatus("Select the chat area first."); _retry.Start(); return; }
         _retry.Stop();
         Start();
@@ -105,7 +73,7 @@ internal sealed class MemoryEngine
 
     public async Task ToggleAsync()
     {
-        if (_stopping) return;
+        if (_closed || _pause is { IsCompleted: false }) return;
         if (Running) { await StopAsync(); return; }
         if (Settings.Chat == null) { SetStatus("Select the chat area first."); return; }
         Start();
@@ -119,6 +87,7 @@ internal sealed class MemoryEngine
             SetStatus("The game's picture size changed since you selected the chat area. Select it again.");
             return;
         }
+        _pause = null;
         _pipeline = new ChatPipeline(_ctx.Frames, _reader, Settings.Chat!.ToRegion(), Settings.FrameWidth, Settings.FrameHeight);
         _pipeline.Start();
         Running = true;
@@ -126,29 +95,52 @@ internal sealed class MemoryEngine
         SetStatus("Starting chat capture…");
     }
 
-    public async Task StopAsync()
+    public Task StopAsync() => _pause ??= PauseAsync();
+
+    public async Task CloseAsync()
     {
-        if (_stopping || !Running) return;
-        _stopping = true; Running = false;
+        _closed = true;
+        _retry.Stop();
+        await StopAsync();
+        Flush(); // Retry any remaining entries if the pause encountered a write error.
+    }
+
+    async Task PauseAsync()
+    {
+        if (_pipeline is not { } pipeline) return;
+        Running = false;
+        _tick.Stop();
         SetStatus("Finishing buffered chat…");
+        var timer = Stopwatch.StartNew();
+        await pipeline.StopAsync();
+        var ocrTime = timer.ElapsedMilliseconds;
+        timer.Restart();
         try
         {
-            if (_pipeline != null) await _pipeline.StopAsync();
             Flush();
-            _tick.Stop();
-            SetStatus($"Paused. Buffered chat and history are saved. {SpamSkipped:N0} repeats skipped this session.");
         }
-        finally { _stopping = false; Changed?.Invoke(); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            SetStatus("Unable to save chat (kept in memory): " + e.Message);
+            return;
+        }
+        finally
+        {
+            _pipeline = null;
+            _ctx.Log($"Chat stop: OCR {ocrTime} ms, final journal flush {timer.ElapsedMilliseconds} ms, {pipeline.Queued} frames left in the OCR queue, {_pending.Count} messages pending.");
+        }
+        SetStatus($"Paused. Recognized chat is saved. {SpamSkipped:N0} repeats skipped this session.");
     }
 
     /// <summary>Finds the chat box in the latest game picture. Stops logging first if it was running.</summary>
     public async Task<bool> DetectChatAsync()
     {
-        if (_detecting) return false;
+        if (_closed || _detecting) return false;
         _detecting = true;
         try
         {
-            if (Running) await StopAsync();
+            if (Running || _pause is { IsCompleted: false }) await StopAsync();
+            if (_closed) return false;
             var latest = _ctx.Frames.Latest;
             if (latest == null || _ctx.Frames.Status.State != CaptureState.Capturing)
             {
@@ -157,6 +149,7 @@ internal sealed class MemoryEngine
             }
             if (!_ctx.Ocr.Available) { SetStatus("This system has no text reader, so chat can't be read."); return false; }
             var region = await ChatDetector.DetectAsync(_reader, latest.Frame);
+            if (_closed) return false;
             if (region == null)
             {
                 SetStatus("Can't see timestamped chat lines yet. Scroll chat to the newest messages, or select the chat area by hand.");
@@ -172,6 +165,7 @@ internal sealed class MemoryEngine
 
     public void SetArea(Region area, Frame frame, bool manual)
     {
+        if (_closed) return;
         Settings.Chat = ChatArea.From(area);
         Settings.FrameWidth = frame.W; Settings.FrameHeight = frame.H;
         Settings.ManualChat = manual;
@@ -199,7 +193,7 @@ internal sealed class MemoryEngine
         {
             Flush();
             var p = _pipeline;
-            if (p.AreaInvalid && !_stopping)
+            if (p.AreaInvalid)
             {
                 await StopAsync();
                 if (Settings.ManualChat) SetStatus("The game's picture size changed. Select the chat area again.");

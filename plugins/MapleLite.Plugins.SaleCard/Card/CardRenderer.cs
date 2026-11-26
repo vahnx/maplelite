@@ -11,6 +11,8 @@ using MapleLite.Core.Game;
 
 namespace MapleLite.Plugins.SaleCard;
 
+public enum CardLayout { Classic, Showcase, MarketBoard, Ledger, Stage }
+
 /// <summary>Everything on a card besides the items. Mirrors the Sale Card Generator app's Card Design options.</summary>
 public sealed record CardOptions
 {
@@ -22,7 +24,7 @@ public sealed record CardOptions
     public string Tagline { get; init; } = "";
     public int[]? Avatar { get; init; }          // AvatarReader.W x AvatarReader.H, already cut out
     public (int[] px, int w, int h)? Map { get; init; }
-    /// <summary>The map's size on the card: 1 fills its room (two tiles wide), down to 0.4.</summary>
+    /// <summary>The map's size relative to the space reserved for it, from 0.4 to 1.</summary>
     public double MapScale { get; init; } = 1;
     /// <summary>Circle your yellow dot on the map, with an arrow and your IGN beside it.</summary>
     public bool SellerMarker { get; init; }
@@ -48,12 +50,16 @@ public sealed record CardOptions
     public double PriceScale { get; init; } = 1;
     public string Total { get; init; } = "";
     public string TotalNote { get; init; } = "";
+    /// <summary>What the items you are buying add up to (price each × quantity), shown under the selling total. Empty: hidden.</summary>
+    public string BuyTotal { get; init; } = "";
+    public string BuyTotalNote { get; init; } = "";
     /// <summary>Tiles in groups by kind, each under a divider in the scheme's accent colour, labelled with the kind.</summary>
     public bool Groups { get; init; } = true;
     /// <summary>The total split by kind, in card order ("Armor", "200k"); shown above the overall total. Empty: overall only.</summary>
     public IReadOnlyList<(string Kind, string Total)> KindTotals { get; init; } = Array.Empty<(string, string)>();
     public string Credit { get; init; } = "";
     public int Theme { get; init; }
+    public CardLayout Layout { get; init; }
     public bool ShowTime { get; init; } = true;
     public string Zone { get; init; } = "";
     public bool MadeWith { get; init; } = true;
@@ -67,14 +73,22 @@ public sealed record CardOptions
 
 /// <summary>
 /// Draws the shareable sale card: a seller card (portrait, IGN, server, tagline, total), the minimap, a tile per item
-/// and a footer. Same layout and colour schemes as the Sale Card Generator app, built from Avalonia controls and
-/// rendered off-screen. Call on the UI thread.
+/// and a footer. Built from Avalonia controls and rendered off-screen. Call on the UI thread.
 /// </summary>
 public static class CardRenderer
 {
     internal sealed record TileLayout(SaleItem Item, Rect Tile, Rect? Price);
     /// <summary>A colour scheme for the card: background, card, icon tile, text, quiet text, prices, lines, quantity badge.</summary>
     public sealed record Theme(string Name, string Bg, string Card, string Tile, string Text, string Muted, string Accent, string Line, string BadgeBg, string BadgeFg);
+
+    internal static readonly (CardLayout Layout, string Name)[] Layouts =
+    [
+        (CardLayout.Classic, "Classic"),
+        (CardLayout.Showcase, "Showcase"),
+        (CardLayout.MarketBoard, "Market Board"),
+        (CardLayout.Ledger, "Ledger"),
+        (CardLayout.Stage, "Stage"),
+    ];
 
     public static readonly Theme[] Themes =
     {
@@ -85,6 +99,8 @@ public static class CardRenderer
         new("Forest",      "#12201A", "#1B2E25", "#E3E8D8", "#EEF5EC", "#93AD9B", "#9BE36B", "#2A4436", "#12201A", "#EEF5EC"),
         new("Sakura",      "#FFF0F5", "#FFFFFF", "#FBE1EA", "#4A2338", "#A97890", "#E0457B", "#F3C4D5", "#4A2338", "#FFFFFF"),
         new("Henesys sky", "#DDF1FF", "#FFFFFF", "#E6F0D8", "#1F3A52", "#6A8AA3", "#2E9B4F", "#B9DAF0", "#1F3A52", "#FFFFFF"),
+        new("Twilight",    "#181528", "#251D3A", "#41305B", "#F5EDFF", "#C1B3D4", "#FF94CB", "#47375F", "#150F25", "#F5EDFF"),
+        new("Blush",       "#FDE9F2", "#FFF9FC", "#F5DCEB", "#3D2149", "#74566F", "#A02464", "#E6BED5", "#63234A", "#FFFFFF"),
     };
 
     /// <summary>Time zones offered for the second time on the card: label, Windows zone id (.NET maps it on macOS and Linux), label in daylight time.</summary>
@@ -237,11 +253,20 @@ public static class CardRenderer
     {
         var prices = layout == null ? null : new Dictionary<SaleItem, Control>();
         var t = Themes[Math.Clamp(o.Theme, 0, Themes.Length - 1)];
+        bool showcase = o.Layout == CardLayout.Showcase, board = o.Layout == CardLayout.MarketBoard,
+            ledger = o.Layout == CardLayout.Ledger, stage = o.Layout == CardLayout.Stage;
+        bool classic = !(showcase || board || ledger || stage);
         IBrush B(string hex) => new SolidColorBrush(Color.Parse(hex));
         IBrush Bg = B(t.Bg), Card = B(t.Card), Tile = B(t.Tile), Text = B(t.Text), Muted = B(t.Muted), Gold = B(t.Accent), Line = B(t.Line),
             BadgeBg = B(t.BadgeBg), BadgeFg = B(t.BadgeFg);
         TextBlock Words(string text, IBrush fg, double size, FontWeight weight = FontWeight.Normal) =>
             new() { Text = text, Foreground = fg, FontSize = size, FontWeight = weight, FontFamily = Font };
+        IBrush Gradient(string from, string to) => new LinearGradientBrush
+        {
+            StartPoint = new RelativePoint(0, 0, RelativeUnit.Relative),
+            EndPoint = new RelativePoint(0, 1, RelativeUnit.Relative),
+            GradientStops = { new GradientStop(Color.Parse(from), 0), new GradientStop(Color.Parse(to), 1) },
+        };
 
         // Who is selling and where: one card that sits in the grid with the items instead of a row of its own.
         var place = new List<string>();
@@ -265,10 +290,10 @@ public static class CardRenderer
             else row.Children.Add(Pill(spot.Length > 0 ? spot : ch, spot.Length > 0 ? Gold : Text, HorizontalAlignment.Center));
             return row;
         }
-        bool hasSeller = !string.IsNullOrWhiteSpace(o.Tagline) || o.Total.Length > 0 || o.Avatar != null || !string.IsNullOrWhiteSpace(o.Seller)
+        bool hasSeller = !string.IsNullOrWhiteSpace(o.Tagline) || o.Total.Length > 0 || o.BuyTotal.Length > 0 || o.Avatar != null || !string.IsNullOrWhiteSpace(o.Seller)
                          || place.Count > 0 || pills || !string.IsNullOrWhiteSpace(o.Location);
 
-        bool hasMap = o.Map != null && hasSeller;
+        bool hasMap = o.Map != null && (hasSeller || !classic);
         // Groups by kind: the items arrive sorted by kind; a new kind starts a new group under its own divider.
         static string Kind(SaleItem it) => it.IsWanted ? "Buying" : it.Category == Categories.Unknown ? "Other" : it.Category;
         bool grouped = o.Groups && items.Select(Kind).Distinct().Count() > 1;
@@ -277,18 +302,27 @@ public static class CardRenderer
         if (hasMap) cols = Math.Max(cols, 4);
         int cardW = items.Any(i => i.IsEquipment) ? 200 : 150;
         const int gap = 10, pad = 22;
-
-        var root = new StackPanel { Background = Bg, Width = pad * 2 + cols * cardW + (cols - 1) * gap };
+        if (showcase) { cols = 2; cardW = 350; }
+        if (board) { cols = Math.Clamp(items.Count, 1, 3); cardW = 238; }
+        if (ledger) { cols = 1; cardW = 524; }
+        if (stage) { cols = 3; cardW = 250; }
+        int inventoryWidth = cols * (cardW + gap) - gap;
+        const int sidebarWidth = 218;
+        bool sidebar = board && (hasSeller || hasMap);
+        int contentWidth = sidebar ? sidebarWidth + (items.Count > 0 ? gap + inventoryWidth : 0) : inventoryWidth;
+        var root = new StackPanel { Background = showcase ? Gradient(t.Bg, t.Line) : Bg, Width = pad * 2 + contentWidth };
+        double contentTop = string.IsNullOrWhiteSpace(o.Title) ? pad : 12;
+        double mapWidth = showcase ? 292 : board ? sidebarWidth : ledger ? 194 : 222;
 
         if (!string.IsNullOrWhiteSpace(o.Title))
         {
-            var title = Words(o.Title.Trim(), Text, 24, FontWeight.Bold);
+            var title = Words(o.Title.Trim(), Text, showcase || stage ? 30 : 24, FontWeight.Bold);
             title.TextTrimming = TextTrimming.CharacterEllipsis;
             title.Margin = new Thickness(pad, 16, pad, 0);
             root.Children.Add(title);
         }
 
-        var grid = new Grid { Margin = new Thickness(pad, string.IsNullOrWhiteSpace(o.Title) ? pad : 12, pad - gap, 0), Width = cols * (cardW + gap) };
+        var grid = new Grid { Margin = new Thickness(pad, contentTop, pad - gap, 0), Width = cols * (cardW + gap) };
         for (int c = 0; c < cols; c++) grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(cardW + gap)));
         int cell = 0;
         void Place(Control card)
@@ -306,23 +340,29 @@ public static class CardRenderer
         if (hasSeller)
         {
             var who = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            bool across = showcase || ledger;
+            var align = across ? TextAlignment.Left : TextAlignment.Center;
+            var side = across ? HorizontalAlignment.Left : HorizontalAlignment.Center;
+            Border? portrait = null;
             if (o.Avatar != null)
             {
-                var picture = new Image { Source = Bitmap(o.Avatar, AvatarReader.W, AvatarReader.H), Width = AvatarReader.W * 2, Height = AvatarReader.H * 2, Stretch = Stretch.Uniform };
+                double zoom = stage ? 3 : ledger ? 1.25 : 2;
+                var picture = new Image { Source = Bitmap(o.Avatar, AvatarReader.W, AvatarReader.H), Width = AvatarReader.W * zoom, Height = AvatarReader.H * zoom, Stretch = Stretch.Uniform };
                 RenderOptions.SetBitmapInterpolationMode(picture, Avalonia.Media.Imaging.BitmapInterpolationMode.None);
-                who.Children.Add(new Border { CornerRadius = new CornerRadius(6), BorderBrush = Line, BorderThickness = new Thickness(1), Child = picture, HorizontalAlignment = HorizontalAlignment.Center });
+                portrait = new Border { CornerRadius = new CornerRadius(6), BorderBrush = Line, BorderThickness = new Thickness(stage ? 0 : 1), Child = picture, HorizontalAlignment = side };
+                if (!across) who.Children.Add(portrait);
             }
             if (!string.IsNullOrWhiteSpace(o.Seller))
             {
-                var name = Words(o.Seller.Trim(), Text, 22, FontWeight.Bold);
-                name.TextAlignment = TextAlignment.Center; name.TextTrimming = TextTrimming.CharacterEllipsis;
-                name.Margin = new Thickness(0, o.Avatar != null ? 8 : 0, 0, 0);
+                var name = Words(o.Seller.Trim(), Text, showcase ? 36 : stage ? 30 : 22, FontWeight.Bold);
+                name.TextAlignment = align; name.TextTrimming = TextTrimming.CharacterEllipsis;
+                name.Margin = new Thickness(0, o.Avatar != null && !across ? 8 : 0, 0, 0);
                 who.Children.Add(name);
             }
             if (place.Count > 0)
             {
                 var where = Words(string.Join("  •  ", place), Gold, 16, FontWeight.SemiBold);
-                where.TextAlignment = TextAlignment.Center; where.TextWrapping = TextWrapping.Wrap; where.Margin = new Thickness(0, 3, 0, 0);
+                where.TextAlignment = align; where.TextWrapping = TextWrapping.Wrap; where.Margin = new Thickness(0, 3, 0, 0);
                 who.Children.Add(where);
             }
             if (!string.IsNullOrWhiteSpace(o.Tagline))
@@ -332,25 +372,33 @@ public static class CardRenderer
                 who.Children.Add(new Border
                 {
                     Background = Gold, CornerRadius = new CornerRadius(8), Padding = new Thickness(8, 2, 8, 3), Margin = new Thickness(0, 6, 0, 0),
-                    HorizontalAlignment = HorizontalAlignment.Center, Child = tag,
+                    HorizontalAlignment = side, Child = tag,
                 });
             }
             if (!hasMap && !string.IsNullOrWhiteSpace(o.Location))
             {
                 var loc = Words(o.Location.Trim(), Gold, 14);
-                loc.TextAlignment = TextAlignment.Center; loc.TextWrapping = TextWrapping.Wrap; loc.Margin = new Thickness(0, 2, 0, 0);
+                loc.TextAlignment = align; loc.TextWrapping = TextWrapping.Wrap; loc.Margin = new Thickness(0, 2, 0, 0);
                 who.Children.Add(loc);
             }
             if (pills && !hasMap)
             {
-                var row = Pills();
-                row.Margin = new Thickness(24, 8, 24, 0);
+                Control row = Pills();
+                if (!classic)
+                {
+                    var badges = new WrapPanel { HorizontalAlignment = side };
+                    if (spot.Length > 0) badges.Children.Add(Pill(spot, Gold, HorizontalAlignment.Left));
+                    if (ch.Length > 0) badges.Children.Add(Pill(ch, Text, HorizontalAlignment.Left));
+                    foreach (Control badge in badges.Children) badge.Margin = new Thickness(0, 0, 6, 3);
+                    row = badges;
+                }
+                row.Margin = classic ? new Thickness(24, 8, 24, 0) : new Thickness(0, 8, 0, 0);
                 who.Children.Add(row);
             }
             if (o.Total.Length > 0)
             {
                 who.Children.Add(new Border { Height = 1, Background = Line, Margin = new Thickness(30, 10, 30, 8) });
-                var head = Words("TOTAL", Muted, 11); head.TextAlignment = TextAlignment.Center; who.Children.Add(head);
+                var head = Words("TOTAL SELLING", Muted, 11); head.TextAlignment = align; who.Children.Add(head);
                 // Split by kind: one line each (the kind on the left, its total on the right), the overall total under them.
                 // With the tiles in groups, each kind's total sits on its divider instead, beside the kind's name.
                 if (o.KindTotals.Count > 0 && !grouped)
@@ -371,70 +419,99 @@ public static class CardRenderer
                     who.Children.Add(lines);
                     who.Children.Add(new Border { Height = 1, Background = Line, Margin = new Thickness(30, 4, 30, 4) });
                 }
-                var sum = Words(o.Total, Gold, 22, FontWeight.Bold); sum.TextAlignment = TextAlignment.Center; who.Children.Add(sum);
+                var sum = Words(o.Total, Gold, 22, FontWeight.Bold); sum.TextAlignment = align; who.Children.Add(sum);
                 if (o.TotalNote.Length > 0)
                 {
-                    var note = Words(o.TotalNote, Muted, 11); note.TextAlignment = TextAlignment.Center; note.TextWrapping = TextWrapping.Wrap;
+                    var note = Words(o.TotalNote, Muted, 11); note.TextAlignment = align; note.TextWrapping = TextWrapping.Wrap;
+                    who.Children.Add(note);
+                }
+            }
+            if (o.BuyTotal.Length > 0)
+            {
+                who.Children.Add(new Border { Height = 1, Background = Line, Margin = new Thickness(30, 10, 30, 8) });
+                var head = Words("TOTAL BUYING", Muted, 11); head.TextAlignment = align; who.Children.Add(head);
+                // In the text colour rather than gold, so it can't be mistaken for the selling total at a glance.
+                var sum = Words(o.BuyTotal, Text, 18, FontWeight.Bold); sum.TextAlignment = align; who.Children.Add(sum);
+                if (o.BuyTotalNote.Length > 0)
+                {
+                    var note = Words(o.BuyTotalNote, Muted, 11); note.TextAlignment = align; note.TextWrapping = TextWrapping.Wrap;
                     who.Children.Add(note);
                 }
             }
             var sellerCard = new Border
             {
                 CornerRadius = new CornerRadius(10), BorderBrush = Line, BorderThickness = new Thickness(1),
-                Padding = new Thickness(10), Margin = new Thickness(0, 0, gap, gap), Child = who,
+                Padding = new Thickness(classic ? 10 : 14), Margin = classic ? new Thickness(0, 0, gap, gap) : default,
+                Background = classic || stage ? null : Card,
                 // beside the map: same height, character centred
                 VerticalAlignment = hasMap ? VerticalAlignment.Stretch : VerticalAlignment.Top,
             };
-            grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-            grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-            grid.Children.Add(sellerCard);
             sellerBox = sellerCard;
-            firstRow = Tall(sellerCard);
-            if (hasMap)
+            if (across && portrait != null)
             {
-                // Where you are standing: the minimap's own picture, as wide as two tiles and one row tall.
-                var (mpx, mw, mh) = o.Map!.Value;
-                double room = (cardW * 2 + gap - 18) * Math.Clamp(o.MapScale, 0.4, 1.0);
-                // as wide as its share of two tiles; a tall crop is held to a sensible height (the width shrinks to keep its shape)
-                double fit = Math.Min(room / mw, 320 * Math.Clamp(o.MapScale, 0.4, 1.0) / mh);
-                double dw = mw * fit, dh = mh * fit;
-                var picture = new Image { Source = Bitmap(mpx, mw, mh), Stretch = Stretch.Fill, Width = dw, Height = dh };
-                RenderOptions.SetBitmapInterpolationMode(picture, Avalonia.Media.Imaging.BitmapInterpolationMode.HighQuality);
-                var where = new Panel { Width = dw, Height = dh, Children = { picture } };
-                if (o.SellerMarker && MapleLite.Core.Game.MapReader.PlayerDot(mpx, mw, mh) is { } dot)
-                    where.Children.Add(Marker((dot.x + 0.5) * fit, (dot.y + 0.5) * fit, dw, dh, Math.Max(9, 4.5 * fit), o.Seller, o.MarkerColours,
-                        o.MarkerTag is { Length: 2 } tagAt ? new Vector(tagAt[0] * fit, tagAt[1] * fit) : null).layer);
-                var mapCard = new Border
-                {
-                    CornerRadius = new CornerRadius(10), BorderBrush = Line, BorderThickness = new Thickness(1), Background = Card,
-                    Padding = new Thickness(4), Margin = new Thickness(0, 0, gap, gap), VerticalAlignment = VerticalAlignment.Stretch,
-                };
-                var inside = new DockPanel();
-                if (!string.IsNullOrWhiteSpace(o.Location) || ch.Length > 0)
-                {
-                    var heading = new DockPanel { Margin = new Thickness(2, 2, 2, 6) };
-                    if (ch.Length > 0)
-                    {
-                        var channelBadge = new Border
-                        {
-                            Background = Text, CornerRadius = new CornerRadius(9), Padding = new Thickness(10, 2, 10, 3), Margin = new Thickness(8, 0, 0, 0),
-                            Child = Words(ch, Bg, 15, FontWeight.Bold),
-                        };
-                        DockPanel.SetDock(channelBadge, Dock.Right);
-                        heading.Children.Add(channelBadge);
-                    }
-                    var label = Words(o.Location.Trim(), Gold, 14);
-                    label.VerticalAlignment = VerticalAlignment.Center; label.TextTrimming = TextTrimming.CharacterEllipsis;
-                    heading.Children.Add(label);
-                    DockPanel.SetDock(heading, Dock.Top);
-                    inside.Children.Add(heading);
-                }
-                inside.Children.Add(new Border { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Child = where });
-                mapCard.Child = inside;
+                var sellerRow = new DockPanel { VerticalAlignment = VerticalAlignment.Center };
+                portrait.Margin = new Thickness(0, 0, 14, 0);
+                DockPanel.SetDock(portrait, Dock.Left);
+                sellerRow.Children.Add(portrait);
+                sellerRow.Children.Add(who);
+                sellerCard.Child = sellerRow;
+            }
+            else sellerCard.Child = who;
+            if (classic)
+            {
                 grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-                Grid.SetRow(mapCard, 0); Grid.SetColumn(mapCard, 1); Grid.SetColumnSpan(mapCard, 2);
+                grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+                grid.Children.Add(sellerCard);
+                firstRow = Tall(sellerCard);
+            }
+        }
+        if (hasMap)
+        {
+            // Scale the minimap and its marker together while preserving the crop's aspect ratio.
+            var (mpx, mw, mh) = o.Map!.Value;
+            double scale = Math.Clamp(o.MapScale, 0.4, 1.0);
+            double room = (classic ? cardW * 2 + gap - 18 : mapWidth - 18) * scale;
+            double fit = Math.Min(room / mw, (classic ? 320 : showcase ? 230 : ledger ? 115 : 180) * scale / mh);
+            double dw = mw * fit, dh = mh * fit;
+            var picture = new Image { Source = Bitmap(mpx, mw, mh), Stretch = Stretch.Fill, Width = dw, Height = dh };
+            RenderOptions.SetBitmapInterpolationMode(picture, Avalonia.Media.Imaging.BitmapInterpolationMode.HighQuality);
+            var where = new Panel { Width = dw, Height = dh, Children = { picture } };
+            if (o.SellerMarker && MapleLite.Core.Game.MapReader.PlayerDot(mpx, mw, mh) is { } dot)
+                where.Children.Add(Marker((dot.x + 0.5) * fit, (dot.y + 0.5) * fit, dw, dh, Math.Max(9, 4.5 * fit), o.Seller, o.MarkerColours,
+                    o.MarkerTag is { Length: 2 } tagAt ? new Vector(tagAt[0] * fit, tagAt[1] * fit) : null).layer);
+            var mapCard = new Border
+            {
+                CornerRadius = new CornerRadius(10), BorderBrush = Line, BorderThickness = new Thickness(1), Background = Card,
+                Padding = new Thickness(4), Margin = classic ? new Thickness(0, 0, gap, gap) : default, VerticalAlignment = VerticalAlignment.Stretch,
+            };
+            var inside = new DockPanel();
+            if (!string.IsNullOrWhiteSpace(o.Location) || ch.Length > 0)
+            {
+                var heading = new DockPanel { Margin = new Thickness(2, 2, 2, 6) };
+                if (ch.Length > 0)
+                {
+                    var channelBadge = new Border
+                    {
+                        Background = Text, CornerRadius = new CornerRadius(9), Padding = new Thickness(10, 2, 10, 3), Margin = new Thickness(8, 0, 0, 0),
+                        Child = Words(ch, Bg, 15, FontWeight.Bold),
+                    };
+                    DockPanel.SetDock(channelBadge, Dock.Right);
+                    heading.Children.Add(channelBadge);
+                }
+                var label = Words(!classic && spot.Length > 0 ? spot : o.Location.Trim(), Gold, 14);
+                label.VerticalAlignment = VerticalAlignment.Center; label.TextTrimming = TextTrimming.CharacterEllipsis;
+                heading.Children.Add(label);
+                DockPanel.SetDock(heading, Dock.Top);
+                inside.Children.Add(heading);
+            }
+            inside.Children.Add(new Border { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Child = where });
+            mapCard.Child = inside;
+            mapBox = mapCard;
+            if (classic)
+            {
+                grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+                Grid.SetColumn(mapCard, 1); Grid.SetColumnSpan(mapCard, 2);
                 grid.Children.Add(mapCard);
-                mapBox = mapCard;
                 firstRow = Math.Max(firstRow, Tall(mapCard));
             }
         }
@@ -480,6 +557,8 @@ public static class CardRenderer
         // "ea" where the card holds more than one, so "×2 · 9,999" reads as 9,999 each, not for both
         static string Scaled(SaleItem it, double scale) => Mesos.Scaled(it.FinalPrice, scale);
         string PriceText(SaleItem it) => Scaled(it, o.PriceScale * it.CardScale) + (o.Each && it.FinalPrice != "Offer" && it.Pieces > 1 ? " ea" : "") + (o.Obo && it.FinalPrice != "Offer" ? " OBO" : "");
+        CornerRadius tileCorners = new(showcase ? 16 : board ? 4 : ledger ? 6 : 10);
+        var tileMargin = new Thickness(0, 0, classic ? gap : 0, gap);
 
         // A short tile: the icon on the left, the name and price to its right; equipment stats underneath.
         Control Compact(SaleItem it)
@@ -494,19 +573,37 @@ public static class CardRenderer
             if (o.TradeTags) tile.Children.Add(TradeTag(it, 8.5, marked && it.InShop));
             if (DiscountTag(it, 8.5, marked && it.InShop) is { } off85) tile.Children.Add(off85);
             var words = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0) };
-            var name = Words(it.Name, Text, 12.5);
-            name.TextWrapping = TextWrapping.Wrap; name.MaxHeight = 34; name.TextTrimming = TextTrimming.CharacterEllipsis;
+            var name = Words(it.Name, Text, classic ? 12.5 : showcase ? 16 : 14, classic ? FontWeight.Normal : FontWeight.SemiBold);
+            name.TextWrapping = TextWrapping.Wrap; name.MaxLines = 2; name.TextTrimming = TextTrimming.CharacterEllipsis;
+            if (classic) { name.MaxHeight = 34; name.MaxLines = 0; }
             words.Children.Add(name);
-            if (ShowPrice(it))
-            {
-                var price = Words(PriceText(it), Gold, 15, FontWeight.Bold);
-                price.TextTrimming = TextTrimming.CharacterEllipsis; price.Margin = new Thickness(0, 2, 0, 0);
-                words.Children.Add(price);
-                prices?.Add(it, price);
-            }
             var row = new DockPanel { VerticalAlignment = VerticalAlignment.Center };
             DockPanel.SetDock(tile, Dock.Left);
             row.Children.Add(tile);
+            if (ShowPrice(it))
+            {
+                var price = Words(PriceText(it), Gold, stage ? 18 : 15, FontWeight.Bold);
+                price.TextTrimming = TextTrimming.CharacterEllipsis;
+                if (showcase || ledger)
+                {
+                    var amount = new Border
+                    {
+                        Background = Bg, BorderBrush = Line, BorderThickness = new Thickness(1),
+                        CornerRadius = new CornerRadius(showcase ? 14 : 4),
+                        Margin = new Thickness(10, 0, 0, 0), Padding = new Thickness(8, 3),
+                        VerticalAlignment = VerticalAlignment.Center, MaxWidth = cardW * 0.45,
+                        Child = price,
+                    };
+                    DockPanel.SetDock(amount, Dock.Right);
+                    row.Children.Add(amount);
+                }
+                else
+                {
+                    price.Margin = new Thickness(0, 2, 0, 0);
+                    words.Children.Add(price);
+                }
+                prices?.Add(it, price);
+            }
             row.Children.Add(words);
             var body = new StackPanel { VerticalAlignment = VerticalAlignment.Top };
             body.Children.Add(row);
@@ -518,8 +615,9 @@ public static class CardRenderer
             }
             return new Border
             {
-                Width = cardW, HorizontalAlignment = HorizontalAlignment.Left, Background = Card, CornerRadius = new CornerRadius(10),
-                Padding = new Thickness(10, 10, 8, 10), Margin = new Thickness(0, 0, gap, gap), Child = body,
+                Width = cardW, HorizontalAlignment = HorizontalAlignment.Left, Background = Card, CornerRadius = tileCorners,
+                Padding = new Thickness(10, ledger ? 7 : 10, 8, ledger ? 7 : 10), Margin = tileMargin, Child = body,
+                BorderBrush = Line, BorderThickness = new Thickness(classic ? 0 : 1),
             };
         }
 
@@ -563,8 +661,9 @@ public static class CardRenderer
             }
             tiles.Add(new Border
             {
-                Width = cardW, HorizontalAlignment = HorizontalAlignment.Left, MinHeight = o.Prices ? 168 : 140, Background = Card, CornerRadius = new CornerRadius(10),
-                Padding = new Thickness(8, 12, 8, 6), Margin = new Thickness(0, 0, gap, gap), Child = card,
+                Width = cardW, HorizontalAlignment = HorizontalAlignment.Left, MinHeight = o.Prices ? 168 : 140, Background = Card, CornerRadius = tileCorners,
+                Padding = new Thickness(8, 12, 8, 6), Margin = tileMargin, Child = card,
+                BorderBrush = Line, BorderThickness = new Thickness(classic ? 0 : 1),
             });
         }
         // A divider: the kind's name in the accent colour and, with totals by kind, the kind's total beside it; then a
@@ -590,7 +689,96 @@ public static class CardRenderer
             row.Children.Add(new Border { Height = 1.5, Background = Gold, Opacity = 0.55, VerticalAlignment = VerticalAlignment.Center, CornerRadius = new CornerRadius(1) });
             return row;
         }
-        if (o.Pack || grouped)
+        Canvas StyledInventory()
+        {
+            var inventory = new Canvas { Width = inventoryWidth, VerticalAlignment = VerticalAlignment.Top };
+            var heights = new double[cols];
+            string? group = null;
+            int column = 0;
+            for (int n = 0; n < tiles.Count; n++)
+            {
+                if (grouped && Kind(items[n]) != group)
+                {
+                    group = Kind(items[n]);
+                    var divider = Divider(group, inventoryWidth);
+                    double top = heights.Max();
+                    Canvas.SetTop(divider, top);
+                    inventory.Children.Add(divider);
+                    Array.Fill(heights, top + Tall(divider));
+                    column = 0;
+                }
+                if (o.Pack) column = Array.IndexOf(heights, heights.Min());
+                var tile = tiles[n];
+                Canvas.SetLeft(tile, column * (cardW + gap));
+                Canvas.SetTop(tile, heights[column]);
+                inventory.Children.Add(tile);
+                heights[column] += Tall(tile);
+                if (!o.Pack && ++column == cols)
+                {
+                    Array.Fill(heights, heights.Max());
+                    column = 0;
+                }
+            }
+            inventory.Height = heights.Max();
+            return inventory;
+        }
+
+        Control StyledHeader()
+        {
+            var header = new Grid();
+            header.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+            if (sellerBox != null) header.Children.Add(sellerBox);
+            if (mapBox != null)
+            {
+                mapBox.Width = mapWidth;
+                mapBox.HorizontalAlignment = sellerBox == null ? HorizontalAlignment.Center : HorizontalAlignment.Right;
+                if (stage) mapBox.VerticalAlignment = VerticalAlignment.Top;
+                if (sellerBox != null)
+                {
+                    if (stage)
+                    {
+                        // Reserve the same width on the left to keep the seller centered on the stage.
+                        header.ColumnDefinitions.Insert(0, new ColumnDefinition(new GridLength(mapWidth + gap)));
+                        Grid.SetColumn(sellerBox, 1);
+                    }
+                    header.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(gap)));
+                    header.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(mapWidth)));
+                    Grid.SetColumn(mapBox, header.ColumnDefinitions.Count - 1);
+                }
+                header.Children.Add(mapBox);
+            }
+            if (!stage && !ledger) return header;
+            if (stage && sellerBox != null) sellerBox.BorderThickness = default;
+            return new Border
+            {
+                Background = stage ? Gradient(t.Bg, t.Line) : Card,
+                BorderBrush = Gold, BorderThickness = stage ? new Thickness(0, 0, 0, 3) : new Thickness(0, 2, 0, 0),
+                CornerRadius = new CornerRadius(stage ? 14 : 6),
+                Padding = new Thickness(stage ? 10 : 0), Child = header,
+            };
+        }
+
+        if (!classic)
+        {
+            var content = new StackPanel { Margin = new Thickness(pad, contentTop, pad, 0), Spacing = gap };
+            if (sidebar)
+            {
+                var profile = new StackPanel { Width = sidebarWidth, Spacing = gap, VerticalAlignment = VerticalAlignment.Top };
+                if (sellerBox != null) profile.Children.Add(sellerBox);
+                if (mapBox != null) profile.Children.Add(mapBox);
+                var columns = new StackPanel { Orientation = Orientation.Horizontal, Spacing = gap };
+                columns.Children.Add(profile);
+                if (tiles.Count > 0) columns.Children.Add(StyledInventory());
+                content.Children.Add(columns);
+            }
+            else
+            {
+                if (sellerBox != null || mapBox != null) content.Children.Add(StyledHeader());
+                if (tiles.Count > 0) content.Children.Add(StyledInventory());
+            }
+            root.Children.Add(content);
+        }
+        else if (o.Pack || grouped)
         {
             // Packed: every tile goes to the top of whichever column is shortest so far (the leftmost of equal ones), at
             // its own height. Tall equipment and short stacks then nest without gaps, and nothing is stretched. The

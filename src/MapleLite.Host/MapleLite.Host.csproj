@@ -71,7 +71,8 @@
   </Target>
   <!-- Inner (per-framework) builds only: the outer multi-target build has no OutDir and would copy into the source tree. -->
   <Target Name="CopyBundledPlugins" AfterTargets="Build" DependsOnTargets="ResolveBundledPlugins" Condition="'$(TargetFramework)' != ''">
-    <Copy SourceFiles="@(_PluginFile)" DestinationFolder="$(OutDir)plugins\%(_PluginFile.Plugin)" SkipUnchangedFiles="true" Condition="Exists('%(_PluginFile.FullPath)')" />
+    <!-- Always overwrite: a skipped copy once left an old plugin running after a rebuild. The files are small. -->
+    <Copy SourceFiles="@(_PluginFile)" DestinationFolder="$(OutDir)plugins\%(_PluginFile.Plugin)" SkipUnchangedFiles="false" Condition="Exists('%(_PluginFile.FullPath)')" />
     <Copy SourceFiles="@(_PluginAsset)" DestinationFiles="@(_PluginAsset->'$(OutDir)plugins\%(Plugin)\Assets\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
   <!-- dotnet publish: put the plugins beside the published app too. -->

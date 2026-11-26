@@ -11,7 +11,7 @@ public sealed record ChatArea(int X, int Y, int Width, int Height)
     public static ChatArea From(Region r) => new(r.X, r.Y, r.Width, r.Height);
 }
 
-/// <summary>Same fields as the MapleMemory app's settings.json, plus the one-time import flag.</summary>
+/// <summary>Same fields as the MapleMemory app's settings.json.</summary>
 public sealed class Settings
 {
     public bool SuppressSpam { get; set; } = true;
@@ -27,8 +27,6 @@ public sealed class Settings
     public ChatArea? Chat { get; set; }
     public int FrameWidth { get; set; }
     public int FrameHeight { get; set; }
-    /// <summary>True once the MapleMemory app's history has been offered for import.</summary>
-    public bool ImportChecked { get; set; }
 }
 
 /// <summary>
@@ -68,46 +66,5 @@ public sealed class Journal
     {
         File.AppendAllText(DailyFiles.PathFor(Folder, Prefix, Ext, e.Time), JsonSerializer.Serialize(e) + Environment.NewLine);
         Entries.Add(e);
-    }
-
-    /// <summary>Where the MapleMemory app keeps its history (Windows only).</summary>
-    public static string AppFolder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MapleMemory");
-
-    /// <summary>
-    /// Copies the MapleMemory app's history in, sorted into this journal's daily files. Exact duplicate lines are
-    /// skipped, so importing twice adds nothing. The app's files are only read, never changed.
-    /// Returns how many daily files got new lines, and how many lines were added.
-    /// </summary>
-    public static (int files, int lines) Import(string from, string to)
-    {
-        if (!Directory.Exists(from) || Path.GetFullPath(from) == Path.GetFullPath(to)) return (0, 0);
-        Directory.CreateDirectory(to);
-        DailyFiles.SplitMonthly(to, Prefix, Ext, TimeOf);
-        var byDay = new Dictionary<string, List<string>>();
-        foreach (var src in Directory.EnumerateFiles(from, "messages-*.jsonl").Order())
-            foreach (var line in File.ReadLines(src))
-            {
-                if (line.Length == 0 || TimeOf(line) is not { } t) continue;
-                var dst = DailyFiles.PathFor(to, Prefix, Ext, t);
-                if (!byDay.TryGetValue(dst, out var list)) byDay[dst] = list = [];
-                list.Add(line);
-            }
-        int files = 0, added = 0;
-        foreach (var (dst, lines) in byDay.OrderBy(kv => kv.Key))
-        {
-            var have = File.Exists(dst) ? new HashSet<string>(File.ReadLines(dst)) : [];
-            var fresh = lines.Where(have.Add).ToList();
-            if (fresh.Count == 0) continue;
-            File.AppendAllLines(dst, fresh);
-            files++; added += fresh.Count;
-        }
-        return (files, added);
-    }
-
-    /// <summary>The MapleMemory app's settings, if it has any.</summary>
-    public static Settings? AppSettings(string from)
-    {
-        try { return JsonSerializer.Deserialize<Settings>(File.ReadAllText(Path.Combine(from, "settings.json"))); }
-        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { return null; }
     }
 }

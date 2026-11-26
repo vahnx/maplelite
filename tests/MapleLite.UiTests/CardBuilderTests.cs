@@ -60,6 +60,138 @@ public class CardBuilderTests
         }
     }
 
+    [AvaloniaFact]
+    public async Task Card_layout_picker_updates_the_shared_image_and_restores_the_selection()
+    {
+        Frame? copied = null;
+        var storage = new Storage(Path.Combine(Path.GetTempPath(), "MapleLite-ui-tests", Guid.NewGuid().ToString("N")));
+        var (window, panel, engine) = Open(storage, frame => { copied = frame; return Task.FromResult(true); });
+        ComboBox LayoutPicker(SaleCardPanel page)
+        {
+            page.GetVisualDescendants().OfType<TabControl>().Single().SelectedIndex = 2;
+            Pump();
+            return Visible<ComboBox>(page).Single(box => AutomationProperties.GetName(box) == "Card layout");
+        }
+        try
+        {
+            var picker = LayoutPicker(panel);
+            Assert.Equal("Classic", picker.SelectedItem);
+            picker.SelectedItem = "Showcase";
+            engine.S.NoTime = true;
+            var (items, options) = engine.Card();
+            Assert.Equal(CardLayout.Showcase, options.Layout);
+
+            var (expected, bitmap) = CardRenderer.Render(items, options);
+            using (bitmap)
+            {
+                Capture(window, "Card-Design-Showcase");
+                var preview = Visible<Image>(panel).Select(image => image.Source)
+                    .OfType<Avalonia.Media.Imaging.RenderTargetBitmap>().Single();
+                Assert.Equal(bitmap.PixelSize, preview.PixelSize);
+                engine.OpenPopout(window);
+                Pump();
+                var popout = Assert.IsType<CardPopout>(Assert.Single(window.OwnedWindows));
+                var popoutImage = Assert.Single(Visible<Image>(popout));
+                Assert.Equal(bitmap.Size, popoutImage.Source!.Size);
+                await engine.CopyCardImageAsync();
+                Assert.Equal(expected.Px, Assert.IsType<Frame>(copied).Px);
+            }
+            engine.SaveSession();
+        }
+        finally { window.Close(); }
+
+        var (reopened, page, restored) = Open(storage);
+        try
+        {
+            Assert.Equal("Showcase", LayoutPicker(page).SelectedItem);
+            Assert.Equal(CardLayout.Showcase, restored.Card().options.Layout);
+        }
+        finally { reopened.Close(); }
+    }
+
+    [AvaloniaFact]
+    public void Styled_cards_keep_every_tile_and_its_price_inside_the_export()
+    {
+        var (window, _, engine) = Open();
+        try
+        {
+            var items = engine.Items.ToArray();
+            var equipment = items.First(i => i.IsEquipment);
+            equipment.Stats = "Weapon attack +63\nAccuracy +4";
+            equipment.Slots = "7";
+            items[^1].Tab = SaleCardEngine.BuyTab;
+            items[^1].Buying = true;
+            items[^1].Custom = ""; // Offer can be hidden independently of the other tiles' prices.
+            var map = new int[160 * 105];
+            for (int y = 0; y < 105; y++)
+                Array.Fill(map, y >= 87 || y is 35 or 65 ? Pixel.Rgb(125, 95, 64) : Pixel.Rgb(44, 68, 103), y * 160, 160);
+            string[] dot = ["..##..", ".#++#.", "#+..+#", "#+..+#", ".#++#.", "..##.."];
+            for (int y = 0; y < dot.Length; y++)
+                for (int x = 0; x < dot[y].Length; x++)
+                    if (dot[y][x] != '.')
+                        map[(54 + y) * 160 + 103 + x] = dot[y][x] == '#' ? Pixel.Rgb(255, 238, 34) : Pixel.Rgb(255, 221, 68);
+            Assert.NotNull(MapReader.PlayerDot(map, 160, 105));
+            const string markerColour = "#00F1B9";
+            int markerPixel = Pixel.Rgb(0, 241, 185);
+            var avatar = new int[AvatarReader.W * AvatarReader.H];
+            for (int y = 24; y < 68; y++)
+                Array.Fill(avatar, y < 45 ? Pixel.Rgb(219, 162, 107) : Pixel.Rgb(73, 135, 124), y * AvatarReader.W + 23, 22);
+            var examples = new (CardLayout Layout, string Theme)[]
+            {
+                (CardLayout.Showcase, "Twilight"), (CardLayout.MarketBoard, "Light"),
+                (CardLayout.Ledger, "Maple"), (CardLayout.Stage, "Midnight"),
+            };
+            var sizes = new HashSet<PixelSize>();
+            foreach (var (layout, theme) in examples)
+            {
+                var options = new CardOptions
+                {
+                    Layout = layout, Theme = Array.FindIndex(CardRenderer.Themes, t => t.Name == theme),
+                    Seller = "CuteLilSin", Server = "Windia", Tagline = "Weekend restock", Channel = "14", Location = "Free Market 19",
+                    Map = (map, 160, 105), SellerMarker = true, MarkerColours = new(Ring: markerColour, Tag: markerColour), Avatar = avatar,
+                    HideOffer = true, ShowTime = false,
+                };
+                foreach (var mode in new (bool Pack, bool Groups, bool Compact)[] { (false, false, true), (true, true, true), (false, true, false) })
+                {
+                    var positions = new List<CardRenderer.TileLayout>();
+                    var (frame, bitmap) = CardRenderer.Render(items,
+                        options with { Pack = mode.Pack, Groups = mode.Groups, Compact = mode.Compact }, positions);
+                    using (bitmap)
+                    {
+                        Assert.Contains(markerPixel, frame.Px);
+                        Assert.Equal(items.Length, positions.Count);
+                        foreach (var position in positions)
+                        {
+                            AssertInside(position.Tile, new Rect(0, 0, frame.W, frame.H));
+                            if (position.Item.FinalPrice == "Offer") Assert.Null(position.Price);
+                            else AssertInside(Assert.IsType<Rect>(position.Price), position.Tile);
+                            Assert.DoesNotContain(positions, other => other != position &&
+                                other.Tile.Intersect(position.Tile) is { Width: > 0.1, Height: > 0.1 });
+                        }
+                        if (!mode.Groups)
+                        {
+                            Assert.True(sizes.Add(bitmap.PixelSize));
+                            var folder = Environment.GetEnvironmentVariable("MAPLELITE_UI_SCREENSHOTS");
+                            if (!string.IsNullOrEmpty(folder))
+                            {
+                                Directory.CreateDirectory(folder);
+                                bitmap.Save(Path.Combine(folder, $"{layout}.png"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        finally { window.Close(); }
+
+        static void AssertInside(Rect rect, Rect parent)
+        {
+            Assert.True(rect.Width > 0 && rect.Height > 0, $"Empty bounds: {rect}");
+            Assert.True(rect.Left >= parent.Left && rect.Top >= parent.Top &&
+                rect.Right <= parent.Right && rect.Bottom <= parent.Bottom, $"{rect} is outside {parent}");
+        }
+    }
+
     public class Context : DispatchProxy
     {
         public IPluginStorage Storage = null!;
@@ -82,14 +214,17 @@ public class CardBuilderTests
     }
     sealed class Storage(string folder) : IPluginStorage
     {
+        readonly Dictionary<string, string> _values = new();
         public string Folder => folder;
-        public T Load<T>(string name) where T : new() => new();
-        public void Save<T>(string name, T value) { }
+        public T Load<T>(string name) where T : new() => _values.TryGetValue(name, out var json)
+            ? System.Text.Json.JsonSerializer.Deserialize<T>(json)!
+            : new();
+        public void Save<T>(string name, T value) => _values[name] = System.Text.Json.JsonSerializer.Serialize(value);
     }
-    static (Window window, SaleCardPanel panel, SaleCardEngine engine) Open(Func<Frame, Task<bool>>? clipboard = null)
+    static (Window window, SaleCardPanel panel, SaleCardEngine engine) Open(Storage? storage = null, Func<Frame, Task<bool>>? clipboard = null)
     {
         var context = DispatchProxy.Create<IPluginContext, Context>();
-        ((Context)(object)context).Storage = new Storage(Path.Combine(Path.GetTempPath(), "MapleLite-ui-tests", Guid.NewGuid().ToString("N")));
+        ((Context)(object)context).Storage = storage ?? new Storage(Path.Combine(Path.GetTempPath(), "MapleLite-ui-tests", Guid.NewGuid().ToString("N")));
         ((Context)(object)context).Clipboard = clipboard;
         var catalog = ItemCatalog.Load(Path.Combine(AppContext.BaseDirectory, "GameData", "Items"));
         Assert.True(catalog.Count > 100);
@@ -122,6 +257,80 @@ public class CardBuilderTests
         window.MouseDown(point, MouseButton.Left); window.MouseUp(point, MouseButton.Left); Pump();
     }
 
+    static void Drag(Window window, GridSplitter splitter, Vector delta)
+    {
+        var point = splitter.TranslatePoint(new Point(splitter.Bounds.Width / 2, splitter.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(point, MouseButton.Left);
+        window.MouseMove(point + delta, RawInputModifiers.LeftMouseButton);
+        window.MouseUp(point + delta, MouseButton.Left);
+        Pump();
+    }
+
+    [AvaloniaFact]
+    public void Shop_card_dividers_resize_and_collapsed_sections_restore_the_saved_layout()
+    {
+        var storage = new Storage(Path.Combine(Path.GetTempPath(), "MapleLite-ui-tests", Guid.NewGuid().ToString("N")));
+        var (window, panel, _) = Open(storage);
+        GridSplitter Divider(SaleCardPanel page, string name) =>
+            Visible<GridSplitter>(page).Single(s => AutomationProperties.GetName(s) == name);
+        Button Header(SaleCardPanel page, string name) =>
+            Visible<Button>(page).Single(b => AutomationProperties.GetName(b) == name);
+        double x, y;
+        try
+        {
+            var lists = Divider(panel, "Resize the item lists");
+            var preview = Divider(panel, "Resize the item area and card preview");
+            var initialLists = lists.TranslatePoint(default, panel)!.Value;
+            var initialPreview = preview.TranslatePoint(default, panel)!.Value;
+            Drag(window, lists, new Vector(80, 0));
+            Drag(window, preview, new Vector(0, -60));
+            lists.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Left });
+            Pump();
+            x = lists.TranslatePoint(default, panel)!.Value.X;
+            y = preview.TranslatePoint(default, panel)!.Value.Y;
+            Assert.Equal(initialLists.X + 64, x, 1);
+            Assert.Equal(initialPreview.Y - 60, y, 1);
+
+            Click(window, Header(panel, "Collapse Available items"));
+            Assert.DoesNotContain(Visible<TextBox>(panel), box => box.Watermark == "Search items…");
+            Assert.DoesNotContain(Visible<GridSplitter>(panel), s => s == lists);
+            Click(window, Header(panel, "Collapse On your card"));
+            Assert.DoesNotContain(Visible<TextBox>(panel), box => box.Watermark == "Search selling card…");
+            Click(window, Header(panel, "Collapse Card preview"));
+            Assert.DoesNotContain(Visible<Button>(panel), b => Equals(b.Content, "Copy image"));
+        }
+        finally { window.Close(); }
+
+        var (reopened, page, _) = Open(storage);
+        try
+        {
+            Click(reopened, Header(page, "Expand Available items"));
+            Click(reopened, Header(page, "Expand On your card"));
+            Click(reopened, Header(page, "Expand Card preview"));
+            var lists = Divider(page, "Resize the item lists");
+            Assert.Equal(x, lists.TranslatePoint(default, page)!.Value.X, 1);
+            Assert.Equal(y, Divider(page, "Resize the item area and card preview").TranslatePoint(default, page)!.Value.Y, 1);
+
+            Click(reopened, Visible<Button>(page).Single(b => Equals(b.Content, "⛶  Enlarge")));
+            Assert.Empty(Visible<GridSplitter>(page));
+            Click(reopened, Visible<Button>(page).Single(b => Equals(b.Content, "⤡  Reduce")));
+            Assert.Equal(y, Divider(page, "Resize the item area and card preview").TranslatePoint(default, page)!.Value.Y, 1);
+
+            reopened.Width = 700; Pump();
+            Assert.Equal(GridResizeDirection.Rows, lists.ResizeDirection);
+            double initialY = lists.TranslatePoint(default, page)!.Value.Y;
+            Drag(reopened, lists, new Vector(0, 24));
+            Assert.Equal(initialY + 24, lists.TranslatePoint(default, page)!.Value.Y, 1);
+
+            page.GetVisualDescendants().OfType<TabControl>().Single().SelectedIndex = 1; Pump();
+            Assert.Contains(Visible<Button>(page), b => AutomationProperties.GetName(b) == "Collapse Item database");
+            Assert.Equal(GridResizeDirection.Rows, Divider(page, "Resize the item lists").ResizeDirection);
+            page.GetVisualDescendants().OfType<TabControl>().Single().SelectedIndex = 0; Pump();
+            reopened.Width = 1240; Pump();
+            Assert.Equal(x, lists.TranslatePoint(default, page)!.Value.X, 1);
+        }
+        finally { reopened.Close(); }
+    }
     static void Capture(Window window, string name)
     {
         var panel = window.Content as SaleCardPanel;
@@ -156,6 +365,27 @@ public class CardBuilderTests
                 .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.Equal(100, engine.KindPercent("Armor"));
             flyout.Hide();
+        }
+        finally { window.Close(); }
+    }
+
+    [AvaloniaFact]
+    public void Buying_items_get_their_own_total_on_the_card()
+    {
+        var (window, _, engine) = Open();
+        try
+        {
+            var (_, before) = engine.Card();
+            Assert.NotEqual("", before.Total);
+            engine.SetBuying(engine.Vision!.Catalog.Values.First(i => i.name == "Emerald Ore"), true);
+            var ore = engine.Items.First(i => i.Name == "Emerald Ore" && (i.Buying || i.IsWanted));
+            ore.Custom = "1000";
+            var (items, options) = engine.Card();
+            Assert.Equal(before.Total, options.Total);           // buying never adds to the selling total
+            Assert.NotEqual("", options.BuyTotal);
+            var (withBuy, a) = CardRenderer.Render(items, options);
+            var (withoutBuy, b) = CardRenderer.Render(items, options with { BuyTotal = "" });
+            using (a) using (b) Assert.True(withBuy.H > withoutBuy.H, "the TOTAL BUYING block should add height");
         }
         finally { window.Close(); }
     }
@@ -384,6 +614,53 @@ public class CardBuilderTests
             Assert.Contains("Slots remaining: not recorded", item.CardDetails(shown.HideMissingTooltipWarnings));
         }
         finally { window.Close(); }
+    }
+
+    [AvaloniaFact]
+    public void Card_category_picker_hides_selling_and_buying_tiles_and_remembers_the_choice()
+    {
+        var storage = new Storage(Path.Combine(Path.GetTempPath(), "MapleLite-ui-tests", Guid.NewGuid().ToString("N")));
+        CheckBox GemsPicker(Window window, SaleCardPanel panel)
+        {
+            var button = Visible<Button>(panel).Single(b => Equals(b.Content, "Categories…"));
+            Click(window, button);
+            var flyout = Assert.IsType<Flyout>(button.Flyout);
+            Assert.True(flyout.IsOpen);
+            var scroll = Assert.IsType<ScrollViewer>(flyout.Content);
+            var categories = Assert.IsType<StackPanel>(scroll.Content);
+            return categories.Children.OfType<CheckBox>().Single(box => Equals(box.Content, "Gems & ores"));
+        }
+
+        var (window, panel, engine) = Open(storage);
+        try
+        {
+            engine.SetBuying(engine.Vision!.Catalog.Values.First(i => i.name == "Emerald Ore"), true);
+            var (shown, options) = engine.Card();
+            Assert.Equal(2, shown.Count(i => i.Category == "Gems & ores"));
+            Assert.Equal("150k", options.Total);
+
+            var gems = GemsPicker(window, panel);
+            Assert.True(gems.IsChecked);
+            gems.IsChecked = false;
+            var (hidden, filteredOptions) = engine.Card();
+            Assert.Equal(shown.Where(i => i.Category != "Gems & ores").Select(i => i.Key), hidden.Select(i => i.Key));
+            Assert.Equal("134k", filteredOptions.Total);
+            Assert.DoesNotContain(engine.EditableCardItems(), i => i.Category == "Gems & ores");
+            Assert.Equal(2, engine.Items.Count(i => i.Include && i.Category == "Gems & ores"));
+            engine.SaveSession();
+        }
+        finally { window.Close(); }
+
+        var (reopened, restoredPanel, restoredEngine) = Open(storage);
+        try
+        {
+            var gems = GemsPicker(reopened, restoredPanel);
+            Assert.False(gems.IsChecked);
+            Assert.DoesNotContain(restoredEngine.Card().items, i => i.Category == "Gems & ores");
+            gems.IsChecked = true;
+            Assert.Equal(2, restoredEngine.Card().items.Count(i => i.Category == "Gems & ores"));
+        }
+        finally { reopened.Close(); }
     }
 
     [AvaloniaFact]

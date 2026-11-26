@@ -48,6 +48,27 @@ public class ChatClassifierTests
     public void Not_a_trade(string text) => Assert.NotEqual("Trade", Classifier.Parse(text).Channel);
 
     [Fact] public void Ad_fragment_is_not_a_whisper() => Assert.NotEqual("Whisper", Classifier.Parse("[Yellow Square] S>int+10 earning 2m").Channel);
+    [Fact]
+    public void Name_tags_are_told_apart_from_scene_text_and_give_the_character_box()
+    {
+        var f = new Frame(200, 260);
+        for (int i = 0; i < f.Px.Length; i++) f.Px[i] = Pixel.Black | 0x88aa66;           // a mid-green scene
+        for (int y = 150; y < 162; y++) for (int x = 80; x < 130; x++)
+            f.Px[y * 200 + x] = Pixel.Black | ((x + y) % 4 == 0 ? 0xffffff : 0x202020);   // dark tag, white letters
+        Assert.True(Nameplates.LooksLikeNameplate(f, new TextBounds(80, 150, 50, 12)));
+        Assert.False(Nameplates.LooksLikeNameplate(f, new TextBounds(10, 20, 50, 12)));  // plain scenery
+        var box = Nameplates.CharacterAbove(new TextBounds(80, 150, 50, 12), Nameplates.Scene(f));
+        Assert.True(box.Bottom > 150 && box.Height >= 80 && box.X < 80 && box.Right > 130);
+        Assert.True(Nameplates.IsName("CuteLilSin") && !Nameplates.IsName("x") && !Nameplates.IsName("two words"));
+    }
+
+    [Fact] public void Ocr_accents_and_tilde_fold_back_to_game_text()
+    {
+        Assert.Equal("STEN : B - SP RESET 100K idowolf.", GameText.FoldOcrLetters("STEN : B - SP RESET 100K idöwolf."));
+        Assert.Equal("110k trade me~~", GameText.FoldOcrLetters("110k trade meææ"));
+        Assert.Equal("Please beware of scams", GameText.FoldOcrLetters("Pleasé beware of scåms"));
+        Assert.Equal("HELLBORN • S> mokbi — €333", GameText.FoldOcrLetters("HELLBORN • S> mokbi — €333"));
+    }
 
     [Theory]
     [InlineData("Your fame has decreased.", "− fame · received")]
@@ -482,44 +503,6 @@ public class ChatHistoryPortTests
     }
 
     [Fact]
-    public void Import_copies_new_lines_once_and_leaves_the_app_files_alone()
-    {
-        var root = Path.Combine(Path.GetTempPath(), "ml-import-" + Guid.NewGuid().ToString("N"));
-        var app = Directory.CreateDirectory(Path.Combine(root, "app")).FullName;
-        var mine = Path.Combine(root, "mine");
-        try
-        {
-            var a = JsonSerializer.Serialize(new Entry(DateTimeOffset.Parse("2026-11-15T10:00:00Z"), "General", "", "[10:00] Alice : hi"));
-            var b = JsonSerializer.Serialize(new Entry(DateTimeOffset.Parse("2026-11-15T10:01:00Z"), "Whisper", "Received", "[From Bob] yo"));
-            File.WriteAllLines(Path.Combine(app, "messages-2026-11.jsonl"), [a, b]);
-            var before = File.ReadAllText(Path.Combine(app, "messages-2026-11.jsonl"));
-            Assert.Equal((1, 2), Journal.Import(app, mine));
-            Assert.Equal((0, 0), Journal.Import(app, mine));        // second import adds nothing
-            File.AppendAllLines(Path.Combine(app, "messages-2026-11.jsonl"), [JsonSerializer.Serialize(new Entry(DateTimeOffset.Parse("2026-11-15T10:02:00Z"), "General", "", "[10:02] Cy : new"))]);
-            Assert.Equal((1, 1), Journal.Import(app, mine));        // only the new line
-            var journal = new Journal(mine);
-            Assert.Equal(3, journal.Entries.Count);
-            Assert.Equal("Whisper", journal.Entries[1].Channel);
-            Assert.StartsWith(before, File.ReadAllText(Path.Combine(app, "messages-2026-11.jsonl")));
-        }
-        finally { Directory.Delete(root, true); }
-    }
-
-    [Fact]
-    public void App_settings_read_including_the_chat_area()
-    {
-        var dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "ml-set-" + Guid.NewGuid().ToString("N"))).FullName;
-        try
-        {
-            File.WriteAllText(Path.Combine(dir, "settings.json"), """{"SuppressSpam":true,"ManualChat":false,"Chat":{"X":280,"Y":630,"Width":546,"Height":74},"FrameWidth":1366,"FrameHeight":768}""");
-            var s = Journal.AppSettings(dir)!;
-            Assert.Equal(new ChatArea(280, 630, 546, 74), s.Chat);
-            Assert.Equal(1366, s.FrameWidth);
-        }
-        finally { Directory.Delete(dir, true); }
-    }
-
-    [Fact]
     public void Csv_neutralizes_formulas_and_quotes()
     {
         var lines = Csv.Lines([new Entry(DateTimeOffset.Parse("2026-11-15T10:00:00Z"), "General", "", "[10:00] Alice : =HYPERLINK(\"x\")")]).ToList();
@@ -528,18 +511,23 @@ public class ChatHistoryPortTests
     }
 
     /// <summary>An engine that "sees" two chat lines in any image, at fixed spots (in enlarged-image pixels).</summary>
-    sealed class ChatEngine : IOcrEngine
+    sealed class ChatEngine(bool blockAfterFirst = false) : IOcrEngine
     {
+        int _chatReads;
+        public TaskCompletionSource Stalled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public string Name => "chat-fake";
         public int MaxImageDimension => 4000;
-        public Task<IReadOnlyList<OcrLine>> RecognizeAsync(Frame image, CancellationToken ct)
+        public async Task<IReadOnlyList<OcrLine>> RecognizeAsync(Frame image, CancellationToken ct)
         {
             OcrLine L(string t, double y) { var w = new OcrWord(t, new TextBounds(9, y, 600, 30)); return new OcrLine(t, w.Box, [w]); }
             // a chat crop is 546x74 → 3x = 1638x222; rows at crop y≈8 and y≈30
-            IReadOnlyList<OcrLine> lines = image.W >= 1600 && image.H < 300
-                ? [L("[20:05] Alice : selling gloves 150k", 24), L("[20:06] Bob : hello there friend", 90)]
-                : [];
-            return Task.FromResult(lines);
+            if (image.W < 1600 || image.H >= 300) return [];
+            if (blockAfterFirst && ++_chatReads > 1)
+            {
+                Stalled.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            }
+            return [L("[20:05] Alice : selling gloves 150k", 24), L("[20:06] Bob : hello there friend", 90)];
         }
     }
 
@@ -560,6 +548,34 @@ public class ChatHistoryPortTests
         Assert.Equal("Alice", got[0].Username);
         Assert.Equal("General", got[0].Channel);
         Assert.StartsWith("OCR", got[0].Source);
+        Assert.Null(pipeline.Error);
+    }
+
+    [Fact]
+    public async Task Pipeline_stops_slow_ocr_and_keeps_recognized_chat()
+    {
+        var platform = new FakePlatform
+        {
+            Next = () =>
+            {
+                var frame = new Frame(1366, 768);
+                Array.Fill(frame.Px, Pixel.Rgb(40, 40, 50));
+                return frame;
+            },
+        };
+        await using var loop = new CaptureLoop(platform);
+        var engine = new ChatEngine(blockAfterFirst: true);
+        using var ocr = new OcrService(engine);
+        var pipeline = new ChatPipeline(loop, new ChatReader(ocr), new Region(280, 630, 546, 74), 1366, 768);
+        loop.Start();
+        pipeline.Start();
+        await engine.Stalled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await pipeline.StopAsync().WaitAsync(TimeSpan.FromSeconds(4));
+
+        var usernames = new List<string>();
+        while (pipeline.TryTake(out var entry)) usernames.Add(entry!.Username);
+        Assert.Equal(["Alice", "Bob"], usernames);
         Assert.Null(pipeline.Error);
     }
 

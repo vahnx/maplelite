@@ -202,8 +202,6 @@ the page is Avalonia, so it runs on every OS the host does.
 - Same line format as the app, one file per day: `messages-YYYY-MM-DD.jsonl`, plus `settings.json`, in
   `plugins/chathistory/` under the MapleLite data folder. Older monthly files are split into days on first start
   (the originals are kept in `monthly-backup/`).
-- On first start it **copies** the MapleMemory app's history and chat area from `%LOCALAPPDATA%\MapleMemory`
-  (the app's files are never changed). "Import from MapleMemory app" copies any lines added since, without duplicates.
 - Checked against the app on a saved capture: the same three messages, channels (Megaphone, Buddy, Megaphone) and
   wrapped-line assembly.
 
@@ -283,6 +281,8 @@ so it has no inventory sync. Removing a Buying entry removes it from the wish li
 The **Prices** slider above the preview adjusts the card's prices without changing your entered prices. Each selling
 item's **▾** panel has its own adjustment, and **Design → Price adjustments by item type** retains the category controls.
 The **Selling** and **Buying** switches beside the export actions show or hide each list on the exported card.
+Use **Categories…** beside those switches to show or hide item types such as Gems & ores in the preview and card image.
+Category choices apply to both lists and are saved with your card. Your item selections and prices are kept.
 
 Open your own Free Market shop in the game, then **Sync** and choose **My FM shop** in the source filter.
 Press **+ Add** on the recognized listings you want to include. The reader checks for the owner's **Close Store** control; browsing another

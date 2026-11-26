@@ -25,6 +25,7 @@ internal sealed class ChatPipeline
     readonly int _frameW, _frameH;
     readonly Channel<Snapshot> _frames;
     readonly CancellationTokenSource _stop = new();
+    readonly CancellationTokenSource _stopDialog = new();
     readonly ConcurrentQueue<Entry> _entries = new();
     readonly ScrollTracker _tracker = new();
     readonly MessageSettler _settler = new();
@@ -70,9 +71,13 @@ internal sealed class ChatPipeline
     {
         _subscription?.Dispose();
         _frames.Writer.TryComplete();
-        _stop.Cancel();
+        _stopDialog.Cancel();
+        // Give the remaining chat crops a short chance to finish without extending shutdown for a full OCR queue.
+        _stop.CancelAfter(TimeSpan.FromSeconds(1));
         if (_completion != null) await _completion.ConfigureAwait(false);
         _uptime.Stop();
+        _stop.Dispose();
+        _stopDialog.Dispose();
     }
 
     // Runs on the host's capture thread: only cheap work here (crop, compare, enqueue).
@@ -108,52 +113,63 @@ internal sealed class ChatPipeline
 
     async Task ReadLoop()
     {
-        await foreach (var snapshot in _frames.Reader.ReadAllAsync())
+        try
         {
-            Interlocked.Decrement(ref _queued);
-            try
+            await foreach (var snapshot in _frames.Reader.ReadAllAsync(_stop.Token))
             {
-                var sw = Stopwatch.StartNew();
-                var rows = await _reader.ReadChatAsync(snapshot.Frame).ConfigureAwait(false);
-                var blocks = ChatLayout.Assemble(rows, snapshot.Frame.W, snapshot.Frame.H);
-                var added = _tracker.Read(blocks.Select(b => b.Text).ToList());
-                if (_tracker.LastHadGap) Interlocked.Increment(ref _gaps);
-                var classified = added.Select(line =>
+                _stop.Token.ThrowIfCancellationRequested();
+                Interlocked.Decrement(ref _queued);
+                try
                 {
-                    var block = blocks.First(b => b.Text == line);
-                    var e = Classifier.Parse(line);
-                    if ((e.Channel == "General" || e.Channel == "Unknown") && block.Hint != null) e = e with { Channel = block.Hint };
-                    return e with { Time = snapshot.Time, Source = block.Partial ? "OCR · partial" : "OCR · assembled" };
-                });
-                foreach (var entry in _settler.Push(classified, snapshot.Time)) _entries.Enqueue(entry);
-                Interlocked.Increment(ref _processed);
-                Interlocked.Exchange(ref _lastProcessTicks, snapshot.Time.UtcTicks);
-                Interlocked.Exchange(ref _ocrTicks, sw.Elapsed.Ticks);
-                _ocrError = null;
+                    var sw = Stopwatch.StartNew();
+                    var rows = await _reader.ReadChatAsync(snapshot.Frame, _stop.Token).ConfigureAwait(false);
+                    var blocks = ChatLayout.Assemble(rows, snapshot.Frame.W, snapshot.Frame.H);
+                    var added = _tracker.Read(blocks.Select(b => b.Text).ToList());
+                    if (_tracker.LastHadGap) Interlocked.Increment(ref _gaps);
+                    var classified = added.Select(line =>
+                    {
+                        var block = blocks.First(b => b.Text == line);
+                        var e = Classifier.Parse(line);
+                        if ((e.Channel == "General" || e.Channel == "Unknown") && block.Hint != null) e = e with { Channel = block.Hint };
+                        return e with { Time = snapshot.Time, Source = block.Partial ? "OCR · partial" : "OCR · assembled" };
+                    });
+                    foreach (var entry in _settler.Push(classified, snapshot.Time)) _entries.Enqueue(entry);
+                    Interlocked.Increment(ref _processed);
+                    Interlocked.Exchange(ref _lastProcessTicks, snapshot.Time.UtcTicks);
+                    Interlocked.Exchange(ref _ocrTicks, sw.Elapsed.Ticks);
+                    _ocrError = null;
+                }
+                catch (Exception e) when (e is not OperationCanceledException || !_stop.IsCancellationRequested)
+                { _ocrError = "Chat OCR: " + e.Message; Interlocked.Increment(ref _dropped); }
             }
-            catch (Exception e) { _ocrError = "Chat OCR: " + e.Message; Interlocked.Increment(ref _dropped); }
         }
-        foreach (var entry in _settler.Flush()) _entries.Enqueue(entry);
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
+        finally
+        {
+            foreach (var entry in _settler.Flush()) _entries.Enqueue(entry);
+        }
     }
 
     async Task DialogLoop()
     {
         string last = "";
-        while (!_stop.IsCancellationRequested)
+        var ct = _stopDialog.Token;
+        while (!ct.IsCancellationRequested)
         {
             var snapshot = Interlocked.Exchange(ref _dialog, null);
             if (snapshot != null)
                 try
                 {
-                    var rows = await _reader.ReadPlainAsync(snapshot.Frame, snapshot.Frame.Bounds, hints: false).ConfigureAwait(false);
+                    var rows = await _reader.ReadPlainAsync(snapshot.Frame, snapshot.Frame.Bounds, hints: false, ct).ConfigureAwait(false);
                     var text = string.Join(" ", rows.Select(r => r.Text));
                     var entry = Classifier.Parse(text);
                     if (entry.Channel == "Trade" && text != last) { _entries.Enqueue(entry with { Time = snapshot.Time, Source = "OCR · dialog" }); last = text; }
                     else if (entry.Channel != "Trade") last = "";
                     _dialogError = null;
                 }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
                 catch (Exception e) { _dialogError = "Trade OCR: " + e.Message; }
-            try { await Task.Delay(100, _stop.Token).ConfigureAwait(false); } catch (OperationCanceledException) { break; }
+            try { await Task.Delay(100, ct).ConfigureAwait(false); } catch (OperationCanceledException) { break; }
         }
     }
 }

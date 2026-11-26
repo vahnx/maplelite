@@ -41,8 +41,7 @@ internal sealed class MemoryPanel : UserControl
             Button("Find chat automatically", async () => { _engine.Settings.ManualChat = false; if (await _engine.DetectChatAsync()) await _engine.AutoStartAsync(); }),
             Button("Select chat area…", async () => await SelectArea()),
             Button("Export CSV…", async () => await Export()),
-            Button("Open logs folder", () => OpenFolder(_engine.Journal.Folder)),
-            Button("Import from MapleMemory app", () => { _engine.ImportAgain(); Refresh(force: true); }));
+            Button("Open logs folder", () => OpenFolder(_engine.Journal.Folder)));
 
         foreach (var c in Classifier.Channels)
         {

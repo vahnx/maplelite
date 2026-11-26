@@ -68,6 +68,7 @@ public sealed class Session
     /// <summary>Take every selling item, or every item you're buying, off the card at once (the top bar's switches).</summary>
     public bool HideSelling { get; set; }
     public bool HideBuying { get; set; }
+    public HashSet<string> HiddenCardCategories { get; set; } = new();
     /// <summary>The Buying tab's search text.</summary>
     public string BuySearch { get; set; } = "";
     public string SellSource { get; set; } = "All sources";
@@ -115,6 +116,7 @@ public sealed class Session
     /// <summary>How large the map is drawn on the card, in percent of the room it has (40 to 100).</summary>
     public int MapScale { get; set; } = 100;
     public bool NoMap { get; set; } public string Theme { get; set; } = ""; public string? Map { get; set; } public int MapW { get; set; } public int MapH { get; set; }
+    public string CardLayout { get; set; } = "";
     public List<SavedItem> Items { get; set; } = new();
     public HashSet<string> DismissedItems { get; set; } = new();
     /// <summary>Your own Free Market shop was open when last seen; when it's gone, its unsold listings go back to the inventory.</summary>

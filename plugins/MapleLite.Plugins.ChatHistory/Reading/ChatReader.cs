@@ -1,5 +1,6 @@
 using MapleLite.Core.Imaging;
 using MapleLite.Core.Ocr;
+using MapleLite.Core.Game;
 
 namespace MapleLite.Plugins.ChatHistory;
 
@@ -28,12 +29,12 @@ internal sealed class ChatReader(IOcr ocr)
     {
         var result = await ocr.ReadAsync(frame, new OcrRequest(region) { Grouping = OcrGrouping.Rows, Scaling = OcrScaling.Bicubic, Preprocess = preprocess ?? OcrPreprocessor.None }, ct).ConfigureAwait(false);
         return hints ? Rows(frame, result.Lines, 0, 0) : result.Lines.Where(l => l.Text.Trim().Length > 1)
-            .Select(l => new ChatRow(l.Text.Trim(), l.Box.X, l.Box.Y, l.Box.Right, l.Box.Bottom)).OrderBy(r => r.Y).ToList();
+            .Select(l => new ChatRow(GameText.FoldOcrLetters(l.Text.Trim()), l.Box.X, l.Box.Y, l.Box.Right, l.Box.Bottom)).OrderBy(r => r.Y).ToList();
     }
 
     static List<ChatRow> Rows(Frame f, IReadOnlyList<OcrLine> lines, int ox, int oy) =>
         lines.Where(l => l.Text.Trim().Length > 1)
-             .Select(l => new ChatRow(l.Text.Trim(), l.Box.X - ox, l.Box.Y - oy, l.Box.Right - ox, l.Box.Bottom - oy, Hint(f, l.Box)))
+             .Select(l => new ChatRow(GameText.FoldOcrLetters(l.Text.Trim()), l.Box.X - ox, l.Box.Y - oy, l.Box.Right - ox, l.Box.Bottom - oy, Hint(f, l.Box)))
              .OrderBy(r => r.Y).ToList();
 
     /// <summary>

@@ -13,6 +13,24 @@ public static partial class GameText
     [GeneratedRegex(@"^\w{2,16}\s*[:：]")]
     private static partial Regex PlayerPrefix();
 
+    /// <summary>
+    /// Undoes the English OCR's habit of reading game text as European letters. The game's chat font has no accents,
+    /// so "idöwolf" is "idowolf"; its tilde reads as "æ". Other symbols (•, —, €) are left alone.
+    /// </summary>
+    public static string FoldOcrLetters(string text)
+    {
+        bool plain = true;
+        foreach (char c in text) if (c > '~') { plain = false; break; }
+        if (plain) return text;
+        var sb = new System.Text.StringBuilder(text.Length);
+        foreach (char c in text.Replace("æ", "~").Replace("Æ", "~").Normalize(System.Text.NormalizationForm.FormD))
+        {
+            if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.NonSpacingMark) continue;
+            sb.Append(c switch { 'ø' => 'o', 'Ø' => 'O', 'ð' => 'd', 'ł' => 'l', 'ı' => 'i', _ => c });
+        }
+        return sb.ToString().Normalize(System.Text.NormalizationForm.FormC);
+    }
+
     /// <summary>Removes a leading chat timestamp such as "[19:57] ".</summary>
     public static string StripStamp(string raw) => Stamp().Replace(raw, "", 1);
 

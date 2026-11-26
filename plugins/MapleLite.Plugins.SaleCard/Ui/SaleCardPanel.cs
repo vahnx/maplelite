@@ -20,10 +20,8 @@ namespace MapleLite.Plugins.SaleCard;
 /// The Shop Card page: available and selected items for Selling and Buying, the card preview, and the Card Design and
 /// Settings panels, which take the list's place while the preview stays in view.
 /// </summary>
-internal sealed class SaleCardPanel : UserControl
+internal sealed partial class SaleCardPanel : UserControl
 {
-    const double BodyHeight = 500;
-
     readonly SaleCardEngine _engine;
     readonly IPluginContext _ctx;
     Session S => _engine.S;
@@ -66,6 +64,7 @@ internal sealed class SaleCardPanel : UserControl
     {
         _engine = engine;
         _ctx = ctx;
+        _layout = ctx.Storage.Load<ShopCardLayout>(LayoutFile);
         _render = new DispatcherTimer(TimeSpan.FromMilliseconds(250), DispatcherPriority.Background, (_, _) => { _render!.Stop(); RenderCard(); });
 
         var copy = Button("Copy image", async () => await _engine.CopyCardImageAsync(), accent: true);
@@ -83,7 +82,7 @@ internal sealed class SaleCardPanel : UserControl
         ToolTip.SetTip(_sellingOn, "On: the items you're selling (the Selling tab) are on the card. Off: none of them are. Your ticks are kept either way.");
         ToolTip.SetTip(_buyingOn, "On: the items you're buying (the Buying tab) are on the card. Off: none of them are. Your ticks are kept either way.");
         var onCard = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center,
-            Children = { new TextBlock { Text = "On the card:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) }.Themed(TextBlock.ForegroundProperty, ThemeTokens.TextMuted), _sellingOn, _buyingOn } };
+            Children = { new TextBlock { Text = "On the card:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) }.Themed(TextBlock.ForegroundProperty, ThemeTokens.TextMuted), _sellingOn, _buyingOn, BuildCategoryPicker() } };
         var cardSwitches = Wrap(_prices, _tooltipWarnings);
         var actions = Wrap(onCard, cardSwitches, save, copy, Button("Export CSV…", async () => await ExportCsvAsync()), Button("Import CSV…", async () => await ImportCsvAsync()), Button("Clear card…", async () => await ClearCardAsync()));
         var top = new DockPanel { Margin = new Thickness(0, 0, 0, 10) };
@@ -97,16 +96,18 @@ internal sealed class SaleCardPanel : UserControl
         // lists saved before the Buying tab came between Selling and Design: Design and Settings moved one along
         if (_engine.S.SectionV < 2) { if (_engine.S.Section >= 1) _engine.S.Section++; _engine.S.SectionV = 2; }
         _sections.SelectedIndex = Math.Clamp(_engine.S.Section, 0, 3);
-        _sections.SelectionChanged += (_, _) => { if (_sections.SelectedIndex >= 0 && _engine.S.Section != _sections.SelectedIndex) { _engine.S.Section = _sections.SelectedIndex; _engine.SettingsChanged(); } };
-        _sections.Height = BodyHeight;
-        _sections.SizeChanged += (_, _) => _sections.Height = _sections.Bounds.Width < 860 ? 780 : BodyHeight;
-
         var maximize = Button("⛶  Enlarge", ToggleMaximized);
         _maximize = maximize;
         ToolTip.SetTip(maximize, "Shows the card across the whole page, as large as it fits. Press Reduce (or Esc) to bring the lists back.");
         // a bar above the card, so the button never covers part of it
-        var previewBar = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
-        var previewTitle = PaneTitle("Card preview");
+        var previewBar = new DockPanel();
+        var previewTitle = CollapseButton(PaneTitle("Card preview"), "Card preview", () => _layout.PreviewCollapsed, () =>
+        {
+            _layout.PreviewCollapsed = !_layout.PreviewCollapsed;
+            if (_maximized) ToggleMaximized();
+            LayoutSections();
+            SaveLayout();
+        });
         previewTitle.VerticalAlignment = VerticalAlignment.Top;
         DockPanel.SetDock(previewTitle, Dock.Left);
         previewBar.Children.Add(previewTitle);
@@ -116,7 +117,7 @@ internal sealed class SaleCardPanel : UserControl
         {
             _liveEditorScroll.IsVisible = editCard.IsChecked == true;
             LayoutCardEditor();
-            _previewBox.Height = _liveEditorScroll.IsVisible ? 650 : _maximized ? 720 : 400;
+            LayoutSections();
             RefreshCardEditor();
         };
         var (priceBar, priceSlider) = CardPriceSlider(engine);
@@ -131,10 +132,10 @@ internal sealed class SaleCardPanel : UserControl
             },
         };
         ToolTip.SetTip(kindPrices, "Adjust card prices by item type.");
-        var previewTools = Wrap(priceBar, kindPrices, editCard, popout, maximize);
-        previewTools.HorizontalAlignment = HorizontalAlignment.Right;
-        previewTools.Margin = new Thickness(8, 0, 0, 0);
-        previewBar.Children.Add(previewTools);
+        _previewTools = Wrap(priceBar, kindPrices, editCard, popout, maximize);
+        _previewTools.HorizontalAlignment = HorizontalAlignment.Right;
+        _previewTools.Margin = new Thickness(8, 0, 0, 0);
+        previewBar.Children.Add(_previewTools);
         var previewDock = new DockPanel();
         actions.HorizontalAlignment = HorizontalAlignment.Right;
         actions.Margin = new Thickness(0, 12, 0, 0);
@@ -149,14 +150,37 @@ internal sealed class SaleCardPanel : UserControl
         _liveEditor.LostFocus += (_, _) => Dispatcher.UIThread.Post(RefreshCardEditor, DispatcherPriority.Background);
         previewDock.Children.Add(_previewContent);
         var previewBox = Card(previewDock, 10);
-        previewBox.Height = 400;
+        _previewActions = actions;
         _previewBox = previewBox;
         KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Escape && _maximized) { ToggleMaximized(); e.Handled = true; } };
-        var body = new Grid { RowDefinitions = new RowDefinitions("Auto,16,Auto") };
-        Grid.SetRow(_sections, 0);
         Grid.SetRow(previewBox, 2);
-        body.Children.Add(_sections);
-        body.Children.Add(previewBox);
+        _body.Children.Add(_sections);
+        _body.Children.Add(previewBox);
+        Grid.SetRow(_previewSplitter, 1);
+        _body.Children.Add(_previewSplitter);
+        OnSplitterMoved(_previewSplitter, () =>
+        {
+            var rows = _body.RowDefinitions;
+            double share = Share(rows[0].Height, rows[2].Height);
+            if (IsStacked(_sections.Bounds.Width)) _layout.StackedPreviewSplit = share;
+            else _layout.PreviewSplit = share;
+            SaveLayout();
+        });
+        _sections.SelectionChanged += (_, e) =>
+        {
+            if (e.Source != _sections) return;
+            if (_sections.SelectedIndex >= 0 && S.Section != _sections.SelectedIndex)
+            {
+                S.Section = _sections.SelectedIndex;
+                _engine.SettingsChanged();
+            }
+            LayoutSections();
+        };
+        _sections.SizeChanged += (_, e) =>
+        {
+            if (IsStacked(e.PreviousSize.Width) != IsStacked(e.NewSize.Width)) LayoutSections();
+        };
+        LayoutSections();
 
         var root = new DockPanel();
         DockPanel.SetDock(top, Dock.Top);
@@ -165,7 +189,7 @@ internal sealed class SaleCardPanel : UserControl
         foot.Margin = new Thickness(2, 8, 0, 0);
         DockPanel.SetDock(foot, Dock.Bottom);
         root.Children.Add(foot);
-        root.Children.Add(new ScrollViewer { Content = body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
+        root.Children.Add(new ScrollViewer { Content = _body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
         Content = root;
 
         void EngineChanged() => Dispatcher.UIThread.Post(() => { if (TopLevel.GetTopLevel(this) != null) OnEngineChanged(); });
@@ -208,20 +232,20 @@ internal sealed class SaleCardPanel : UserControl
         var toolbar = new DockPanel { Margin = new Thickness(0, 4, 0, 12) };
         DockPanel.SetDock(actions, Dock.Right); toolbar.Children.Add(actions); toolbar.Children.Add(help);
         help.VerticalAlignment = VerticalAlignment.Center;
-        var filters = new Grid { ColumnDefinitions = new ColumnDefinitions("*,8,Auto,8,Auto"), Margin = new Thickness(0, 10, 0, 12) };
-        filters.Children.Add(_search); Grid.SetColumn(_source, 2); filters.Children.Add(_source); Grid.SetColumn(_type, 4); filters.Children.Add(_type);
+        var filters = Stack(6, _search, Wrap(_source, _type));
+        filters.Margin = new Thickness(0, 6, 0, 0);
         _list.ItemsSource = _shown;
         _list.ItemTemplate = new FuncDataTemplate<SaleItem>((item, _) => AvailableRow(item!));
         _selectedList.ItemsSource = _selected;
         _selectedList.ItemTemplate = new FuncDataTemplate<SaleItem>((item, _) => Row());
         foreach (var review in new[] { _availablePrices, _selectedPrices })
             review.Click += (_, _) => { _reviewPrices = !_reviewPrices; RefreshList(force: true); };
-        var available = ListPane(PaneTitle("Available items"), Stack(4, filters, _availablePrices, SelectedHeaders()), _list, _empty);
+        var available = ListPane(Stack(4, filters, _availablePrices, SelectedHeaders()), _list, _empty);
         _missingStats.Click += (_, _) => { _missingOnly = !_missingOnly; RefreshList(force: true); };
         ToolTip.SetTip(_missingStats, "Show selected equipment or scrolls whose stats are incomplete. Each row has a Read stats button.");
-        var selected = ListPane(_selectedTitle, Stack(4, SelectedFilters(false), _selectionHidden, Wrap(_missingStats, _selectedPrices), SelectedHeaders()), _selectedList, _selectedEmpty,
+        var selected = ListPane(Stack(4, SelectedFilters(false), _selectionHidden, Wrap(_missingStats, _selectedPrices), SelectedHeaders()), _selectedList, _selectedEmpty,
             Muted("Removing an item here only removes it from the card."));
-        var columns = SplitLists(available, selected);
+        var columns = SplitLists(PaneTitle("Available items"), available, _selectedTitle, selected, _layout.Selling);
         var dock = new DockPanel(); DockPanel.SetDock(toolbar, Dock.Top); dock.Children.Add(toolbar); dock.Children.Add(columns);
         _selectedList.LostFocus += (_, _) => Dispatcher.UIThread.Post(() => { if (_listDirty && !_selectedList.IsKeyboardFocusWithin) RefreshList(); }, DispatcherPriority.Background);
         return dock;
@@ -278,32 +302,15 @@ internal sealed class SaleCardPanel : UserControl
         return Stack(4, search, filters);
     }
 
-    static Control ListPane(Control title, Control filters, Control list, Control empty, Control? footer = null)
+    static Control ListPane(Control filters, Control list, Control empty, Control? footer = null)
     {
         var dock = new DockPanel();
         list.Margin = new Thickness(0, 0, 10, 0);
-        var head = Stack(0, title, filters); DockPanel.SetDock(head, Dock.Top); dock.Children.Add(head);
+        DockPanel.SetDock(filters, Dock.Top); dock.Children.Add(filters);
         if (footer != null) { footer.Margin = new Thickness(0, 10, 0, 0); DockPanel.SetDock(footer, Dock.Bottom); dock.Children.Add(footer); }
         empty.Margin = new Thickness(16, 24); empty.HorizontalAlignment = HorizontalAlignment.Center;
         dock.Children.Add(new Panel { Children = { empty, new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled } } });
-        return Card(dock, 14);
-    }
-
-    static Grid SplitLists(Control available, Control selected)
-    {
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,14,*") };
-        grid.Children.Add(available); Grid.SetColumn(selected, 2); grid.Children.Add(selected);
-        bool? stacked = null;
-        grid.SizeChanged += (_, _) =>
-        {
-            bool narrow = grid.Bounds.Width < 860;
-            if (stacked == narrow) return;
-            stacked = narrow;
-            grid.ColumnDefinitions = new ColumnDefinitions(narrow ? "*" : "*,14,*");
-            grid.RowDefinitions = new RowDefinitions(narrow ? "*,14,*" : "*");
-            Grid.SetColumn(selected, narrow ? 0 : 2); Grid.SetRow(selected, narrow ? 2 : 0);
-        };
-        return grid;
+        return dock;
     }
 
     Control AvailableRow(SaleItem item)
@@ -545,14 +552,14 @@ internal sealed class SaleCardPanel : UserControl
         _buyType.SelectionChanged += (_, _) => { if (_loading) return; S.BuyType = _buyType.SelectedItem as string ?? "All types"; RefreshBuying(); _engine.SettingsChanged(); };
         var filters = new Grid { ColumnDefinitions = new ColumnDefinitions("*,8,Auto"), Margin = new Thickness(0, 10, 0, 10) };
         filters.Children.Add(_buySearch); Grid.SetColumn(_buyType, 2); filters.Children.Add(_buyType);
-        var available = ListPane(PaneTitle("Item database"), Stack(0, filters, _buyNote), _buyRows, new TextBlock());
+        var available = ListPane(Stack(0, filters, _buyNote), _buyRows, new TextBlock());
         _buyPrices.Click += (_, _) => { _reviewBuyingPrices = !_reviewBuyingPrices; RefreshBuying(force: true); };
-        var selected = ListPane(_buySelectedTitle, Stack(4, SelectedFilters(true), _buyHidden, _buyPrices, SelectedHeaders(true)), _buySelectedRows, _buySelectedEmpty,
+        var selected = ListPane(Stack(4, SelectedFilters(true), _buyHidden, _buyPrices, SelectedHeaders(true)), _buySelectedRows, _buySelectedEmpty,
             Muted("Set how many you want and your offer. Expand an item to add stat requirements."));
         var dock = new DockPanel();
         var help = Muted("Find what you want to buy, then add it to your card. Your inventory is not changed.");
         help.Margin = new Thickness(0, 8, 0, 16); DockPanel.SetDock(help, Dock.Top); dock.Children.Add(help);
-        dock.Children.Add(SplitLists(available, selected));
+        dock.Children.Add(SplitLists(PaneTitle("Item database"), available, _buySelectedTitle, selected, _layout.Buying));
         _buySelectedRows.LostFocus += (_, _) => Dispatcher.UIThread.Post(() => RefreshBuying(), DispatcherPriority.Background);
         return dock;
     }
@@ -808,6 +815,30 @@ internal sealed class SaleCardPanel : UserControl
 
     // ---------------------------------------------------------------- panels
 
+    Button BuildCategoryPicker()
+    {
+        var categories = new StackPanel();
+        foreach (var category in Categories.Order)
+        {
+            categories.Children.Add(Check(category, () => !S.HiddenCardCategories.Contains(category), show =>
+            {
+                if (show) S.HiddenCardCategories.Remove(category);
+                else S.HiddenCardCategories.Add(category);
+            }));
+        }
+        var button = new Button
+        {
+            Content = "Categories…",
+            Flyout = new Flyout
+            {
+                Placement = PlacementMode.Top,
+                Content = new ScrollViewer { Content = categories, MaxHeight = 360, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled },
+            },
+        };
+        ToolTip.SetTip(button, "Show or hide item categories on the card for both Selling and Buying.");
+        return button;
+    }
+
     static TextBlock Head(string text) { var t = Title(text); t.Margin = new Thickness(0, 10, 0, 4); return t; }
 
     TextBox Field(TextBox box, Action<string> set, string tip = "")
@@ -829,10 +860,10 @@ internal sealed class SaleCardPanel : UserControl
     readonly List<(CheckBox box, Func<bool> get)> _checks = new();
     readonly List<Action> _loaders = new();
 
-    ComboBox Choice(IEnumerable<string> items, Func<string> get, Action<string> set, string tip = "")
+    ComboBox Choice(IEnumerable<string> items, Func<string> get, Action<string> set, string tip = "", bool rates = true)
     {
         var c = new ComboBox { ItemsSource = items.ToList(), MinWidth = 160 };
-        c.SelectionChanged += (_, _) => { if (_loading || c.SelectedItem is not string s) return; set(s); _engine.SettingsChanged(rates: true); };
+        c.SelectionChanged += (_, _) => { if (_loading || c.SelectedItem is not string s) return; set(s); _engine.SettingsChanged(rates: rates); };
         if (tip.Length > 0) ToolTip.SetTip(c, tip);
         _loaders.Add(() => { var list = (List<string>)c.ItemsSource!; c.SelectedIndex = Math.Max(0, list.IndexOf(get())); });
         return c;
@@ -852,13 +883,21 @@ internal sealed class SaleCardPanel : UserControl
         var server = Stack(4, Muted("Server"), Field(_server, v => S.Server = v), Muted("Tagline"),
             Field(_tagline, v => S.Tagline = v, "A line shown under your server on the card. Leave it empty to show nothing."));
         var manual = Button("Manual read", async () => await _engine.ManualReadAsync());
+        manual.HorizontalAlignment = HorizontalAlignment.Left;
         ToolTip.SetTip(manual, "Reads your character name from the status bar, the map name from the minimap, and the channel if the Change Channel window is open");
         var portrait = Button("Take character portrait", async () => await SnipAsync());
-        ToolTip.SetTip(portrait, "Takes the newest game picture and lets you draw a box around your character.");
+        portrait.HorizontalAlignment = HorizontalAlignment.Left;
+        ToolTip.SetTip(portrait, "Opens the newest game picture with each character outlined by its name tag (yours in gold). Click one, or drag your own box.");
 
-        var look = Two(Stack(4, Muted("Colours"), Choice(CardRenderer.Themes.Select(t => t.Name), () => S.Theme, v => S.Theme = v, "Colour scheme of the card")),
-                       Stack(4, Muted("Order"), Choice(SaleCardEngine.Orders, () => S.Order, v => S.Order = v,
-                           "The order of the tiles. By type keeps each kind together (weapons, armor, accessories, potions, scrolls, gems and ores…), related items side by side.")));
+        var layout = Choice(CardRenderer.Layouts.Select(l => l.Name), () => S.CardLayout, v => S.CardLayout = v,
+            "Classic uses the original tile grid. Showcase puts prices at the right in two columns. " +
+            "Market Board has a seller sidebar. Ledger uses one column. Stage centers your portrait above the items.", rates: false);
+        Avalonia.Automation.AutomationProperties.SetName(layout, "Card layout");
+        var look = Wrap(
+            Stack(4, Muted("Layout"), layout),
+            Stack(4, Muted("Colours"), Choice(CardRenderer.Themes.Select(t => t.Name), () => S.Theme, v => S.Theme = v, "Colour scheme of the card")),
+            Stack(4, Muted("Order"), Choice(SaleCardEngine.Orders, () => S.Order, v => S.Order = v,
+                "The order of the tiles. By type keeps each kind together (weapons, armor, accessories, potions, scrolls, gems and ores…), related items side by side.")));
 
         var tagColours = Stack(4,
             Muted("Tag colours"),
@@ -871,7 +910,7 @@ internal sealed class SaleCardPanel : UserControl
         var show = Stack(0,
             Check("Character picture", () => !S.NoAvatar, v => S.NoAvatar = !v, "Shows your character picture. Take character portrait lets you draw one by hand."),
             Check("Minimap", () => !S.NoMap, v => S.NoMap = !v, "The minimap picture, with the dot for where you stand. Read while the minimap is open at full or middle size."),
-            Check("Total", () => !S.NoTotal, v => S.NoTotal = !v, "The total for everything on the card (price each × quantity). Items priced Offer are counted separately."),
+            Check("Totals", () => !S.NoTotal, v => S.NoTotal = !v, "Total Selling and Total Buying, each summed separately (price each × quantity). Items priced Offer are counted separately."),
             Check("Total per kind", () => !S.NoKindTotals, v => S.NoKindTotals = !v,
                 "Splits the total by kind of item (Armor 200k, Weapons 50k, Gems & ores 45k), with the overall total under it. Shows when the card has more than one kind."),
             Check("Group items by kind", () => !S.NoGroups, v => S.NoGroups = !v,
@@ -909,7 +948,7 @@ internal sealed class SaleCardPanel : UserControl
         void ShowSize() => sizeLabel.Text = $"Map size on the card: {(int)size.Value}%";
         size.ValueChanged += (_, _) => { ShowSize(); if (_loading) return; S.MapScale = (int)size.Value; _engine.SettingsChanged(); };
         _loaders.Add(() => { size.Value = Math.Clamp(S.MapScale, 40, 100); ShowSize(); });
-        ToolTip.SetTip(size, "How much of its room (two tiles wide) the map takes on the card");
+        ToolTip.SetTip(size, "How much of the space reserved for the minimap it takes up on the card");
         var marker = Check("Seller location", () => !S.NoSellerMarker, v => S.NoSellerMarker = !v,
             "Circles your yellow dot on the card's map, with an arrow and your IGN beside it, so buyers can find you. Shows when your dot is in the part of the map on the card.");
         var colours = Stack(4,
@@ -922,12 +961,13 @@ internal sealed class SaleCardPanel : UserControl
             _cropper, sizeLabel, size);
 
         return Card(Stack(6,
+            Head("Look"), look,
             Head("Seller"), Two(seller, server),
             Muted("Location"), Field(_location, v => S.Location = v), _locationNote,
             Muted("Card title"), Field(_title, v => S.Title = v),
-            Wrap(manual, portrait),
-            Head("Look"), look,
+            manual,
             Head("Show on the card"), show,
+            Head("Character portrait"), Stack(6, Muted("Click your character, found by its name tag, or drag a box around it on the newest game picture."), portrait),
             Head("Map"), map,
             Head("Footer"), footer));
     }
@@ -1193,10 +1233,7 @@ internal sealed class SaleCardPanel : UserControl
     void ToggleMaximized()
     {
         _maximized = !_maximized;
-        _sections.IsVisible = !_maximized;
-        Grid.SetRow(_previewBox, _maximized ? 0 : 2);
-        Grid.SetRowSpan(_previewBox, _maximized ? 3 : 1);
-        _previewBox.Height = _maximized ? 720 : _liveEditorScroll.IsVisible ? 650 : 400;
+        LayoutSections();
         _preview.StretchDirection = _maximized ? StretchDirection.Both : StretchDirection.DownOnly;
         _maximize.Content = _maximized ? "⤡  Reduce" : "⛶  Enlarge";
         ToolTip.SetTip(_maximize, _maximized ? "Back to the lists above the card (Esc)" : "Shows the card across the whole page, as large as it fits. Press Reduce (or Esc) to bring the lists back.");
@@ -1308,7 +1345,7 @@ internal sealed class SaleCardPanel : UserControl
     {
         var frame = _engine.FrameForSnip();
         if (frame == null || TopLevel.GetTopLevel(this) is not Window owner) return;
-        var px = await SnipWindow.SelectAsync(owner, frame);
+        var px = await SnipWindow.SelectAsync(owner, frame, () => _engine.FindCharactersAsync(frame), S.Seller);
         if (px != null) { _engine.SetManualAvatar(px); LoadFromSession(); }
     }
 

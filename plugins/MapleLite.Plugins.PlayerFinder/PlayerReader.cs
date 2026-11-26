@@ -17,7 +17,7 @@ internal sealed partial class PlayerReader(IOcr ocr)
     public async Task<PlayerScan> ReadAsync(Frame frame, string[] names, string? ownName, Region chat,
         bool highlightSigns, bool markMap, bool highlightChat, CancellationToken ct)
     {
-        var scene = new Region(0, 0, frame.W, Math.Max(1, frame.H - 65));
+        var scene = Nameplates.Scene(frame);
         var map = MapReader.PictureBounds(frame);
         var minimap = map is { } picture ? new Region(0, 0, picture.Right + 30, picture.Bottom + 18).Intersect(scene) : (Region?)null;
         var signs = FindShopSigns(frame, scene);
@@ -55,10 +55,7 @@ internal sealed partial class PlayerReader(IOcr ocr)
                 // avatar's vertical position using the normal distance from the tail to the feet.
                 plate = new TextBounds(bubble.TailX - 22, bubble.Box.Bottom + 76, 44, 11);
             }
-            int center = (int)Math.Round(plate.CenterX);
-            int bottom = (int)Math.Ceiling(plate.Bottom) + 3;
-            int half = Math.Max(30, (int)Math.Ceiling(plate.Width / 2) + 6);
-            var player = new Region(center - half, bottom - 89, half * 2, 89).Intersect(scene);
+            var player = Nameplates.CharacterAbove(plate, scene);
             if (player.IsEmpty) continue;
             ShopSign? shop = highlightSigns && hasPlate && speech == null ? NearestSign(signs, plate, found.Values) : null;
             var sign = highlightSigns ? speech?.Box ?? shop?.Outline : null;
@@ -95,8 +92,7 @@ internal sealed partial class PlayerReader(IOcr ocr)
     [GeneratedRegex(@"^\[\s*\d{1,2}\s*:\s*\d{2}\s*\]\s*(?:\[(?:Buddy|Party|Guild|Alliance|Whisper|General)\]\s*)?(?:\[(?:From|To)\s+(?<name>[A-Za-z0-9_]{2,16})\]\s*:?|(?<name>[A-Za-z0-9_]{2,16})\s*[:：>])\s*\S", RegexOptions.IgnoreCase)]
     private static partial Regex ChatSender();
 
-    internal static bool IsName(string name) => name.Length is >= 2 and <= 16
-        && name.All(c => char.IsAsciiLetterOrDigit(c) || c == '_');
+    internal static bool IsName(string name) => Nameplates.IsName(name);
 
     static Dictionary<string, TextBounds> MatchNames(Frame frame, IReadOnlyList<OcrLine> lines, HashSet<string> wanted,
         Region? minimap, Region chat, IReadOnlyList<ShopSign> signs, IReadOnlyList<SpeechBubble> bubbles, bool discover)
@@ -132,25 +128,7 @@ internal sealed partial class PlayerReader(IOcr ocr)
         }
     }
 
-    static bool LooksLikeNameplate(Frame frame, TextBounds box)
-    {
-        // The ordinary plate darkens the background to at most 95, with white or yellow lettering.
-        // Require both glyphs and the dark backing across the word, rather than listing all scene text.
-        var bounds = new Region((int)Math.Floor(box.Left), (int)Math.Floor(box.Top),
-            (int)Math.Ceiling(box.Width), (int)Math.Ceiling(box.Height)).Intersect(frame.Bounds);
-        if (bounds.IsEmpty) return false;
-        int dark = 0, backing = 0, ink = 0;
-        for (int y = bounds.Y; y < bounds.Bottom; y++)
-            for (int x = bounds.X; x < bounds.Right; x++)
-            {
-                int p = frame.At(x, y);
-                if (Pixel.Max(p) <= 95) dark++;
-                if (Pixel.Max(p) is > 0 and <= 95) backing++;
-                if ((p & 0xffffff) is 0xffffff or 0xffff00) ink++;
-            }
-        int total = bounds.Width * bounds.Height;
-        return dark >= total * .62 && backing >= total * .30 && ink >= Math.Max(6, total * .08);
-    }
+    static bool LooksLikeNameplate(Frame frame, TextBounds box) => Nameplates.LooksLikeNameplate(frame, box);
 
     sealed record ShopSign(Region Outline, Region Caption);
 

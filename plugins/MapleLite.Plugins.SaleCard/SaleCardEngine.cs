@@ -249,6 +249,7 @@ public sealed class SaleCardEngine
             if (!S.ListSortDefaulted) { if (S.ListSort.Length == 0) { S.ListSort = "on"; S.ListSortDown = false; } S.ListSortDefaulted = true; }
             S.ShopSold ??= new(); S.KindPercent ??= new(); S.Renames ??= new(); S.ShopRenames ??= new(); S.ManualOrder ??= new();
             S.DismissedItems ??= new();
+            S.HiddenCardCategories ??= new();
             // Lists saved before this was remembered: what is there came from the game, so keep following it.
             S.AutoLocation ??= S.Location;
             S.AutoIgn ??= S.Seller;
@@ -605,6 +606,8 @@ public sealed class SaleCardEngine
 
     /// <summary>The newest game picture for the portrait snip, or null with the reason in the status line.</summary>
     public Frame? FrameForSnip() => Latest();
+    /// <summary>Characters in the picture, found by their name tags, for clicking one as the portrait.</summary>
+    public Task<List<Nameplate>> FindCharactersAsync(Frame frame) => Nameplates.FindAsync(_ctx.Ocr, frame, S.Seller);
 
     static bool InGrid(InvLayout l, (int x, int y)? cursor) => cursor is { } c &&
         c.x >= l.GridX && c.x < l.GridX + Vision.Cols * Vision.PitchX && c.y >= l.GridY && c.y < l.GridY + Vision.Rows * Vision.PitchY;
@@ -1766,48 +1769,65 @@ public sealed class SaleCardEngine
         };
     }
 
+    IEnumerable<SaleItem> CardEntries(bool includeHiddenCategories = false) => Items.Where(i => i.Include &&
+        (i.IsWanted ? !S.HideBuying : !S.HideSelling) &&
+        (includeHiddenCategories || !S.HiddenCardCategories.Contains(i.Category)));
+
     /// <summary>
     /// What the card shows now, and the card's options: the selling items ticked in the selected Selling tab, then the
-    /// items you're buying, each group in the chosen order. Either group can be switched off the card as a whole.
+    /// items you're buying, each group in the chosen order. The card's section and category switches apply to both.
     /// </summary>
     public (List<SaleItem> items, CardOptions options) Card()
     {
-        var selling = S.HideSelling ? new List<SaleItem>() : Items.Where(i => i.Include && i.Tab != BuyTab).ToList();
+        var visible = CardEntries().ToList();
+        var selling = visible.Where(i => !i.IsWanted).ToList();
         if (S.Order != "Manual") selling = MergeStacks(selling);
-        var buying = S.HideBuying ? new List<SaleItem>() : Items.Where(i => i.Include && i.Tab == BuyTab).ToList();
+        var buying = visible.Where(i => i.IsWanted).ToList();
         // What you sell: its kind's adjustment and its own, applied with the card's slider (prices, discount tags, totals).
         foreach (var i in selling) i.CardScale = KindPercent(i.Category) / 100.0 * i.PricePercent / 100.0;
         foreach (var i in buying) i.CardScale = 1;
         var chosen = selling.Concat(buying).ToList();
         // Total: price each × quantity (× sets for stars and bullets). Items with no price ("Offer") are counted apart.
-        string total = "", totalNote = "";
+        // Selling and buying are summed apart, so the card never mixes what you ask for with what you'd pay.
+        string total = "", totalNote = "", buyTotal = "", buyTotalNote = "";
         var kindTotals = new List<(string, string)>();
         double priceScale = Math.Clamp(S.PricePercent, 1, 200) / 100.0;   // the price slider, on the total too
         if (!S.NoTotal && S.PricesShown)
         {
-            long sum = 0; int priced = 0, offers = 0;
-            var byKind = new Dictionary<string, long>();
-            // what you are selling: items marked Buying are not part of the total
-            foreach (var i in chosen.Where(i => !i.Buying))
+            static bool IsBuy(SaleItem i) => i.Buying || i.IsWanted;
+            (long sum, int priced, int offers, Dictionary<string, long> byKind) Sum(IEnumerable<SaleItem> items)
             {
-                long? each = !string.IsNullOrWhiteSpace(i.Custom) ? Mesos.Parse(i.Custom) : i.RateValue;
-                if (each is long p)
+                long sum = 0; int priced = 0, offers = 0;
+                var byKind = new Dictionary<string, long>();
+                foreach (var i in items)
                 {
-                    p = Math.Max(1, (long)Math.Round(p * priceScale * i.CardScale, MidpointRounding.AwayFromZero));
-                    long worth = p * (i.IsEquipment ? 1 : SoldBySet(i.ItemId) ? Sets(i.Qty) : Count(i.Qty) ?? 1);
-                    sum += worth; priced++;
-                    byKind[i.Category] = byKind.GetValueOrDefault(i.Category) + worth;
+                    long? each = !string.IsNullOrWhiteSpace(i.Custom) ? Mesos.Parse(i.Custom) : i.RateValue;
+                    if (each is long p)
+                    {
+                        p = Math.Max(1, (long)Math.Round(p * priceScale * i.CardScale, MidpointRounding.AwayFromZero));
+                        long worth = p * (i.IsEquipment ? 1 : SoldBySet(i.ItemId) ? Sets(i.Qty) : Count(i.Qty) ?? 1);
+                        sum += worth; priced++;
+                        byKind[i.Category] = byKind.GetValueOrDefault(i.Category) + worth;
+                    }
+                    else offers++;
                 }
-                else offers++;
+                return (sum, priced, offers, byKind);
             }
-            if (priced > 0)
+            var sell = Sum(chosen.Where(i => !IsBuy(i)));
+            if (sell.priced > 0)
             {
-                total = Mesos.Format(sum) + (S.Obo ? " OBO" : "");
-                totalNote = offers > 0 && !S.HideOffer ? $"+ {offers} by offer" : "";
+                total = Mesos.Format(sell.sum) + (S.Obo ? " OBO" : "");
+                totalNote = sell.offers > 0 && !S.HideOffer ? $"+ {sell.offers} by offer" : "";
             }
-            // Split by kind only when there is more than one: a single kind's total is the total.
-            if (!S.NoKindTotals && byKind.Count > 1)
-                kindTotals = byKind.OrderBy(k => KindRank(k.Key)).Select(k => (k.Key, Mesos.Format(k.Value))).ToList();
+            var buy = Sum(chosen.Where(IsBuy));
+            if (buy.priced > 0)
+            {
+                buyTotal = Mesos.Format(buy.sum);
+                buyTotalNote = buy.offers > 0 && !S.HideOffer ? $"+ {buy.offers} by offer" : "";
+            }
+            // Split by kind only when there is more than one: a single kind's total is the total. Selling only.
+            if (!S.NoKindTotals && sell.byKind.Count > 1)
+                kindTotals = sell.byKind.OrderBy(k => KindRank(k.Key)).Select(k => (k.Key, Mesos.Format(k.Value))).ToList();
         }
         // The price sites are not credited in the footer: the card shows your prices, wherever they came from.
         var options = new CardOptions
@@ -1816,8 +1836,9 @@ public sealed class SaleCardEngine
             Avatar = S.NoAvatar ? null : AvatarFor(S.Seller), Map = S.NoMap ? null : CardMap(), MapScale = Math.Clamp(S.MapScale, 40, 100) / 100.0,
             Prices = S.PricesShown, Obo = S.Obo, HideOffer = S.HideOffer, Compact = S.CompactTiles, Stats = !S.NoStats,
             HideMissingTooltipWarnings = S.HideMissingTooltipWarnings,
-            Total = total, TotalNote = totalNote, PriceScale = priceScale, Groups = !S.NoGroups && S.Order != "Manual", KindTotals = kindTotals,
+            Total = total, TotalNote = totalNote, BuyTotal = buyTotal, BuyTotalNote = buyTotalNote, PriceScale = priceScale, Groups = !S.NoGroups && S.Order != "Manual", KindTotals = kindTotals,
             Theme = Math.Max(0, Array.FindIndex(CardRenderer.Themes, t => t.Name == S.Theme)),
+            Layout = CardRenderer.Layouts.FirstOrDefault(layout => layout.Name == S.CardLayout).Layout,
             ShowTime = !S.NoTime, Zone = S.LocalTime ? S.Zone : "",
             ShopMarker = !S.NoShopMarker, Discord = S.Discord ?? "", SellerMarker = !S.NoSellerMarker, Each = !S.NoEach, Pack = !S.NoPack && S.Order != "Manual", TradeTags = !S.NoTradeTags,
             DiscountTags = !S.NoDiscountTags,
@@ -2112,15 +2133,16 @@ public sealed class SaleCardEngine
     }
 
     // Use the actual editable entries, not detached merged tiles. Selling always precedes Buying.
-    public List<SaleItem> EditableCardItems() => InOrder(Items.Where(i => i.Include &&
-        (i.IsWanted ? !S.HideBuying : !S.HideSelling)).ToList()).OrderBy(i => i.IsWanted).ToList();
+    public List<SaleItem> EditableCardItems() => InOrder(CardEntries().ToList()).OrderBy(i => i.IsWanted).ToList();
 
     public void MoveCardItem(SaleItem item, int direction)
     {
         if (direction != -1 && direction != 1) return;
-        var entries = EditableCardItems();
-        int from = entries.IndexOf(item), to = from + direction;
-        if (from < 0 || to < 0 || to >= entries.Count || entries[from].IsWanted != entries[to].IsWanted) return;
+        var visible = EditableCardItems();
+        int index = visible.IndexOf(item), neighbor = index + direction;
+        if (index < 0 || neighbor < 0 || neighbor >= visible.Count || item.IsWanted != visible[neighbor].IsWanted) return;
+        var entries = InOrder(CardEntries(includeHiddenCategories: true).ToList()).OrderBy(i => i.IsWanted).ToList();
+        int from = entries.IndexOf(item), to = entries.IndexOf(visible[neighbor]);
         (entries[from], entries[to]) = (entries[to], entries[from]);
         S.ManualOrder = entries.Select(i => i.Key).Concat(S.ManualOrder.Where(k => entries.All(i => i.Key != k))).Distinct().ToList();
         S.Order = "Manual";
