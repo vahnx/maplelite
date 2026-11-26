@@ -41,4 +41,6 @@ public sealed record OverlayItem(double X, double Y, string Text, OverlayTone To
     public bool Dim { get; init; }
     /// <summary>Optional label outline, as an opaque 0xRRGGBB color.</summary>
     public uint? LabelAccentRgb { get; init; }
+    /// <summary>Optional custom color as 0xRRGGBB, used instead of <see cref="Tone"/> for the text, timer and rectangle outline.</summary>
+    public uint? ColorRgb { get; init; }
 }

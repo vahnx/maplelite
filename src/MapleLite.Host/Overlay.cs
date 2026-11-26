@@ -46,8 +46,21 @@ internal sealed class OverlayService : IDisposable
     {
         if (_layers.TryGetValue(layer, out var old) && old.SequenceEqual(items)) return; // unchanged: no redraw
         _layers[layer] = items; _dirty = true;
+        Trace(layer, items.Count);
     }
-    public void Clear(string layer) { _layers.TryRemove(layer, out _); _dirty = true; }
+    public void Clear(string layer)
+    {
+        if (_layers.TryRemove(layer, out _)) Trace(layer, 0);
+        _dirty = true;
+    }
+
+    /// <summary>With MAPLELITE_OVERLAY_TRACE=1, logs every change to a layer (to see why outlines come and go).</summary>
+    void Trace(string layer, int count)
+    {
+        if (TraceOn && layer != TestLayer) _shell.Log($"overlay trace {DateTimeOffset.Now:HH:mm:ss.fff}: {layer} → {count} item(s)");
+    }
+
+    static readonly bool TraceOn = Environment.GetEnvironmentVariable("MAPLELITE_OVERLAY_TRACE") == "1";
     /// <summary>Every plugin's items (not the test pattern, nor <paramref name="except"/>'s layer), drawn or not.</summary>
     public IReadOnlyList<OverlayItem> Everything(string? except = null) =>
         _layers.Where(l => l.Key != TestLayer && l.Key != except).SelectMany(l => l.Value).ToList();
@@ -213,7 +226,7 @@ internal sealed class OverlayWindow : Window
         foreach (var it in items.OrderBy(it => !it.Dim))
         {
             double x = (it.X + offset.X) / scale, y = (it.Y + offset.Y) / scale;
-            var color = Tone(it.Tone);
+            var color = it.ColorRgb is { } custom ? Color.FromUInt32(custom | 0xFF000000u) : Tone(it.Tone);
             if (it.Rectangle is { } box)
             {
                 var shape = new Rectangle

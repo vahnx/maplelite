@@ -1,6 +1,7 @@
-namespace MapleLite.Plugins.PlayerFinder;
+namespace MapleLite.Core.Game;
 
-internal sealed class NearbyRoster
+/// <summary>Names seen in recent scans, kept a while after they stop being read so the list doesn't flicker (shared by Player Finder and NPC Highlighter).</summary>
+public sealed class NearbyRoster
 {
     static readonly TimeSpan ReadableScanRetention = TimeSpan.FromSeconds(12);
     static readonly TimeSpan CaptureGapRetention = TimeSpan.FromSeconds(25);

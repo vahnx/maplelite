@@ -5,7 +5,8 @@ using MapleLite.Core.Ocr;
 
 namespace MapleLite.Plugins.PlayerFinder;
 
-internal sealed record Sighting(string Name, Region Player, Region? Sign, string? Caption, Region? MapMarker, bool FromBubble);
+/// <summary>A watched or picked player in view. <paramref name="Plate"/> is their name tag (none when placed from a speech bubble).</summary>
+internal sealed record Sighting(string Name, Region Player, Region? Sign, string? Caption, Region? MapMarker, bool FromBubble, TextBounds? Plate = null);
 internal sealed record PlayerScan(Region Scene, Region? Minimap, IReadOnlyList<Sighting> Players,
     IReadOnlyList<Region> Messages, string[]? Nearby);
 
@@ -63,7 +64,7 @@ internal sealed partial class PlayerReader(IOcr ocr)
             Region? marker = null;
             if (hasPlate && selfDot is { } dot && map is { } mapArea && ownName != null && found.TryGetValue(ownName, out var own))
                 marker = ProjectMarker(frame, mapArea, dot, own, plate, name.Equals(ownName, StringComparison.OrdinalIgnoreCase));
-            players.Add(new Sighting(name, player, sign, caption, marker, !hasPlate));
+            players.Add(new Sighting(name, player, sign, caption, marker, !hasPlate, hasPlate ? plate : null));
         }
         var nearby = found.Keys.Concat(bubbles.Select(bubble => bubble.Name))
             .Where(name => !name.Equals(ownName, StringComparison.OrdinalIgnoreCase))

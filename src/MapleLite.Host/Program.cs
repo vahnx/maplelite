@@ -21,6 +21,7 @@ internal static class Program
         AppDomain.CurrentDomain.UnhandledException += (_, e) => WriteCrashLog(e.ExceptionObject);
         var ocrTest = Arg(args, "--ocrtest");
         if (ocrTest != null) return OcrTest(ocrTest, Arg(args, "--out"));
+        if (Arg(args, "--npctest") is { } npcTest) return NpcTest(npcTest, Arg(args, "--names") ?? "", Arg(args, "--out"), Arg(args, "--shots"));
         Options.ReplayPath = Arg(args, "--replay");
         Options.ReplayLoop = args.Contains("--loop");
         Options.OverlayTest = args.Contains("--overlay-test");
@@ -68,6 +69,67 @@ internal static class Program
         if (OperatingSystem.IsLinux()) return new MapleLite.Platform.Linux.LinuxPlatform();
         throw new PlatformNotSupportedException("On Windows, run the net8.0-windows build of MapleLite.");
 #endif
+    }
+
+    /// <summary>
+    /// --npctest &lt;recording folder&gt; --names "A;B" [--out txt] [--shots dir]: runs NPC Highlighter's finding and
+    /// following over a recorded session the way the plugin does (an OCR read every half second, landing a few frames
+    /// late; following on every frame) and writes, per frame, which NPCs are outlined where.
+    /// </summary>
+    static int NpcTest(string folder, string names, string? outPath, string? shots)
+    {
+        var wanted = names.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var files = File.ReadAllLines(Path.Combine(folder, "frames.tsv"))
+            .Select(l => l.Split('\t')).Where(p => p.Length >= 2)
+            .Select(p => (Ms: double.Parse(p[0], System.Globalization.CultureInfo.InvariantCulture), Path: Path.Combine(folder, p[1]))).ToList();
+        using var platform = CreatePlatform();
+        using var ocr = new OcrService(platform.Ocr);
+        var tracker = MapleLite.Core.Game.NameTagTracker.ForNpcs();
+        var lines = new List<string>();
+        var shown = wanted.ToDictionary(n => n, _ => 0);
+        var start = DateTimeOffset.UnixEpoch;
+        double nextRead = 0;
+        (int Due, MapleLite.Core.Imaging.Frame Frame, List<MapleLite.Core.Game.TagSighting> Found, DateTimeOffset At)? pending = null;
+        if (shots != null) Directory.CreateDirectory(shots);
+        for (int i = 0; i < files.Count; i++)
+        {
+            var frame = FrameFiles.LoadPng(files[i].Path);
+            var at = start.AddMilliseconds(files[i].Ms);
+            if (pending is { } p && p.Due <= i)
+            {
+                tracker.Confirm(p.Frame, p.Found, p.At);
+                pending = null;
+            }
+            string read = "";
+            if (pending == null && files[i].Ms >= nextRead)
+            {
+                var scan = MapleLite.Core.Game.NpcTags.ScanAsync(ocr, frame, wanted, true).GetAwaiter().GetResult();
+                var found = scan.Found;
+                read = " | OCR: " + string.Join(", ", found.Select(f => $"{f.Name}@{f.Plate.X:0},{f.Plate.Y:0}"))
+                    + " | in view: " + string.Join(", ", scan.InView);
+                pending = (i + 3, frame, found, at);
+                nextRead = files[i].Ms + 500;
+            }
+            tracker.Follow(frame, at);
+            var now = tracker.Current(frame);
+            foreach (var n in now.Select(s => s.Name).Distinct()) shown[n]++;
+            lines.Add($"{i,4} {files[i].Ms,8:0}ms  " + string.Join("  ", now.Select(s => $"{s.Name}@{s.Plate.X:0},{s.Plate.Y:0}")) + read);
+            if (shots != null && i % 10 == 0)
+            {
+                foreach (var s in now) Outline(frame, s.Body, unchecked((int)0xffff55cc));
+                FrameFiles.SavePng(frame, Path.Combine(shots, $"{i:000000}.png"));
+            }
+        }
+        lines.Insert(0, $"{files.Count} frames · " + string.Join(" · ", shown.Select(kv => $"{kv.Key} outlined in {kv.Value}")));
+        File.WriteAllText(outPath ?? "npctest.txt", string.Join(Environment.NewLine, lines));
+        return 0;
+
+        static void Outline(MapleLite.Core.Imaging.Frame f, MapleLite.Core.Imaging.Region r, int color)
+        {
+            r = r.Intersect(f.Bounds);
+            for (int x = r.X; x < r.Right; x++) { f.Px[r.Y * f.W + x] = color; f.Px[(r.Bottom - 1) * f.W + x] = color; }
+            for (int y = r.Y; y < r.Bottom; y++) { f.Px[y * f.W + r.X] = color; f.Px[y * f.W + r.Right - 1] = color; }
+        }
     }
 
     static int OcrTest(string png, string? outPath)

@@ -1,8 +1,9 @@
 using MapleLite.Core.Imaging;
 
-namespace MapleLite.Plugins.PlayerFinder;
+namespace MapleLite.Core.Game;
 
-internal static class ChatPanel
+/// <summary>Where the chat panel is, so finders can leave the text in it out (shared by Player Finder and NPC Highlighter).</summary>
+public static class ChatPanel
 {
     // The Classic World chat toggle is anchored to the centered HUD. Its + or − indicates
     // the current state even if Chat History was configured at a different panel height.

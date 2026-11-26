@@ -326,9 +326,24 @@ the channel last read from the game's Change Channel window, and the time in you
 Turn on **Settings → Overlay** and use windowed or borderless mode on Windows for in-game markers.
 
 - Player Finder outlines readable nameplates, Free Market shop signs, standard overhead speech bubbles, and matching chat lines.
+  Between scans it follows each player's name tag on every frame, so outlines stay on players as they walk, and a scan that misses a name doesn't clear its outline.
   When nameplates overlap, the speech bubble's pointer can provide an estimated position.
 - Minimap markers appear when Player Finder can line up your own nameplate and yellow dot with a visible target's red dot.
 - Focus mode dims the surrounding scene and follows the chat panel as it expands or collapses.
+
+## NPC Highlighter
+
+Open **NPC Highlighter** and choose an NPC from **Nearby NPCs** (the names on yellow tags in view; titles like "Blacksmith" are left out)
+and press **+ Highlight**, or type a name (several words are fine, e.g. `Mr. Pickall`) and press **+ Add NPC**.
+Each NPC gets its own color picker, an on/off checkbox and a **Remove** button; the list is saved between sessions.
+With **Settings → Overlay** on (windowed or borderless mode on Windows), every listed NPC in view is outlined with its name above it, in its color.
+
+- NPCs are found by OCR of their yellow name tags; white player tags with the same name are ignored.
+  Case, spaces and punctuation don't matter, and names of six or more letters allow one misread letter.
+- Between reads, each tag's lettering is followed on every frame, so outlines stay on the NPCs while the camera scrolls,
+  even when a player's name tag covers theirs. A tag hidden completely is held for up to 3 seconds.
+- Outlines clear when capture stops, or as soon as the game window moves or resizes.
+- Developer: `MapleLite --npctest <recording folder> --names "Anvil;Silas Irons" --out npc.txt` runs the finding and following over a recorded session.
 
 ## Camera
 

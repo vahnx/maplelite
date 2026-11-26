@@ -68,6 +68,16 @@ public sealed class OcrPreprocessor(string key, Func<Frame, Frame> apply)
         return Pixel.Rgb(v, v, v);
     }));
 
+    /// <summary>
+    /// Yellow lettering only (NPC name tags, yellow notices) as black on white; white, grey and every other color
+    /// drop out, so white player tags drawn against an NPC tag can't merge with it.
+    /// </summary>
+    public static readonly OcrPreprocessor YellowText = new("yellow", f => ImageOps.Map(f, p => IsYellow(p) ? Pixel.Black : Pixel.White));
+
+    /// <summary>True for the game's yellow lettering (#FFFF00, a little leeway); white, grey and the tan of desert maps are not.</summary>
+    public static bool IsYellow(int p) =>
+        Pixel.R(p) >= 225 && Pixel.G(p) >= 225 && Pixel.B(p) <= 90;
+
     /// <summary>Pixels whose brightest channel reaches <paramref name="level"/> become black text on white.</summary>
     public static OcrPreprocessor BrightText(int level) => new($"bright:{level}", f => ImageOps.Map(f, p => Pixel.Max(p) >= level ? Pixel.Black : Pixel.White));
 

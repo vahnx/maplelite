@@ -45,6 +45,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MapleLite.Plugins.DpsSimula
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MapleLite.Plugins.PlayerFinder", "plugins\MapleLite.Plugins.PlayerFinder\MapleLite.Plugins.PlayerFinder.csproj", "{4CEBB10E-610C-42E1-AE0B-8FD62D3309DA}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MapleLite.Plugins.NpcHighlighter", "plugins\MapleLite.Plugins.NpcHighlighter\MapleLite.Plugins.NpcHighlighter.csproj", "{7EAE7816-5497-4810-BC52-5CA722BD3CD8}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -122,6 +124,10 @@ Global
 		{4CEBB10E-610C-42E1-AE0B-8FD62D3309DA}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{4CEBB10E-610C-42E1-AE0B-8FD62D3309DA}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{4CEBB10E-610C-42E1-AE0B-8FD62D3309DA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7EAE7816-5497-4810-BC52-5CA722BD3CD8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7EAE7816-5497-4810-BC52-5CA722BD3CD8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7EAE7816-5497-4810-BC52-5CA722BD3CD8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7EAE7816-5497-4810-BC52-5CA722BD3CD8}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{B68D34B2-E44D-48CF-A1EB-FBF41B52FBBA} = {4362428F-4D33-4F03-941C-34E0CCE8D0B4}
@@ -141,5 +147,6 @@ Global
 		{0D89D55C-CF4D-47E5-BF86-D97F226C135B} = {FB574EF1-14B9-4E01-BC25-62AEC0662F8A}
 		{49AF9C8A-FBAC-4065-9C50-41A1459DB93A} = {627211A3-0152-4D95-A443-C0D9EA1ED674}
 		{4CEBB10E-610C-42E1-AE0B-8FD62D3309DA} = {627211A3-0152-4D95-A443-C0D9EA1ED674}
+		{7EAE7816-5497-4810-BC52-5CA722BD3CD8} = {627211A3-0152-4D95-A443-C0D9EA1ED674}
 	EndGlobalSection
 EndGlobal

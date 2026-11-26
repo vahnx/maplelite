@@ -21,5 +21,6 @@
     <ProjectReference Include="..\..\plugins\MapleLite.Plugins.SaleCard\MapleLite.Plugins.SaleCard.csproj" />
     <ProjectReference Include="..\..\plugins\MapleLite.Plugins.DpsSimulator\MapleLite.Plugins.DpsSimulator.csproj" />
     <ProjectReference Include="..\..\plugins\MapleLite.Plugins.PlayerFinder\MapleLite.Plugins.PlayerFinder.csproj" />
+    <ProjectReference Include="..\..\plugins\MapleLite.Plugins.NpcHighlighter\MapleLite.Plugins.NpcHighlighter.csproj" />
   </ItemGroup>
 </Project>

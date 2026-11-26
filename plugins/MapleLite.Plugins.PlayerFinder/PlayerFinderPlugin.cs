@@ -8,6 +8,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using MapleLite.Core.Capture;
+using MapleLite.Core.Game;
 using MapleLite.Core.Imaging;
 using MapleLite.Sdk;
 
@@ -37,6 +38,10 @@ public sealed class PlayerFinderPlugin : IPlugin
     readonly Dictionary<string, LastSeen> _seen = new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string, DateTimeOffset> _encounters = new(StringComparer.OrdinalIgnoreCase);
     readonly NearbyRoster _nearbyRoster = new();
+    /// <summary>Follows watched and picked players' name tags on every frame between scans.</summary>
+    readonly NameTagTracker _players = NameTagTracker.ForPlayers();
+    /// <summary>Each tracked player as the last scan that read their tag saw them (sign, caption, map marker).</summary>
+    readonly Dictionary<string, Sighting> _tagged = new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string, TextBlock> _watchDetails = new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string, string> _notes = new(StringComparer.OrdinalIgnoreCase);
     readonly DispatcherTimer _noteSave = new() { Interval = TimeSpan.FromMilliseconds(500) };
@@ -48,6 +53,8 @@ public sealed class PlayerFinderPlugin : IPlugin
     GameFrame? _chatFrame;
     Region? _liveChat;
     ScannedFrame? _result;
+    /// <summary>When <see cref="_result"/> arrived. A scan takes a second or two, so its picture is already that old when it lands.</summary>
+    DateTimeOffset _resultAt;
     OverlayItem? _alert;
     LastSeen? _pickedSeen;
     DateTimeOffset _alertUntil;
@@ -74,7 +81,8 @@ public sealed class PlayerFinderPlugin : IPlugin
         foreach (var (name, note) in context.Storage.Load<Dictionary<string, string>>("notes"))
             _notes[name] = note;
         _noteSave.Tick += (_, _) => AutosaveNotes();
-        _frames = context.Frames.Subscribe(TrackChat, 8);
+        if (Tracing) _players.Trace = message => Trace("tag " + message);
+        _frames = context.Frames.Subscribe(TrackChat, 15);
         _worker = Task.Run(() => RunAsync(_stop.Token));
         return Task.CompletedTask;
     }
@@ -366,6 +374,8 @@ public sealed class PlayerFinderPlugin : IPlugin
     void ResetOverlay()
     {
         _result = null;
+        _players.Reset();
+        _tagged.Clear();
         _context.Overlay.Clear();
     }
 
@@ -378,12 +388,21 @@ public sealed class PlayerFinderPlugin : IPlugin
             bool changed = chat != _liveChat;
             _chatFrame = frame;
             _liveChat = chat;
-            if (_result is { } result && frame.Time - result.Frame.Time > TimeSpan.FromSeconds(2.5))
+            // Stale once no newer scan has come for 5 s (scans take a second or two; the tracker keeps
+            // positions current in between).
+            if (_result != null && frame.Time - _resultAt > TimeSpan.FromSeconds(5))
             {
+                Trace($"cleared: no scan for {(frame.Time - _resultAt).TotalSeconds:0.0} s");
                 ResetOverlay();
                 return;
             }
-            if (changed || _alert != null && frame.Time >= _alertUntil) RenderOverlay(frame);
+            if (_result != null)
+            {
+                // Follow the name tags onto this frame so outlines stay on players between scans.
+                _players.Follow(frame.Frame, frame.Time);
+                RenderOverlay(frame);
+            }
+            else if (changed || _alert != null && frame.Time >= _alertUntil) RenderOverlay(frame);
         }
     }
 
@@ -393,13 +412,31 @@ public sealed class PlayerFinderPlugin : IPlugin
         if (_result is not { } result || result.Frame.Window.Handle != current.Window.Handle
             || result.Frame.Frame.Bounds != current.Frame.Bounds || result.Frame.Offset != current.Offset)
         {
+            if (_result is { } shown) Trace($"cleared: picture moved {shown.Frame.Frame.Bounds} at {shown.Frame.Offset} → {current.Frame.Bounds} at {current.Offset}");
             _context.Overlay.Clear();
             return;
         }
-        var items = Draw(result.Scan, _settings.Focus && _liveChat != null, _liveChat ?? default,
+        var items = Draw(Followed(result.Scan, current), _settings.Focus && _liveChat != null, _liveChat ?? default,
             result.Chat == _liveChat);
         if (_alert != null) items.Add(_alert);
         _context.Overlay.Draw(items);
+    }
+
+    /// <summary>
+    /// The scan with each tagged player moved to where the tracker follows their name tag now, their sign moving
+    /// with them; a player a scan missed stays while the tracker still sees them. Players placed from a speech
+    /// bubble (no tag) stay where the scan put them.
+    /// </summary>
+    PlayerScan Followed(PlayerScan scan, GameFrame current)
+    {
+        var players = scan.Players.Where(p => p.Plate == null).ToList();
+        foreach (var tag in _players.Current(current.Frame))
+        {
+            if (!_tagged.TryGetValue(tag.Name, out var last) || last.Plate is not { } was) continue;
+            int dx = (int)Math.Round(tag.Plate.X - was.X), dy = (int)Math.Round(tag.Plate.Y - was.Y);
+            players.Add(last with { Player = tag.Body, Plate = tag.Plate, Sign = last.Sign?.Offset(dx, dy) });
+        }
+        return scan with { Players = players };
     }
 
     async Task RunAsync(CancellationToken ct)
@@ -495,6 +532,7 @@ public sealed class PlayerFinderPlugin : IPlugin
                 ? _nearbyRoster.Update(DateTimeOffset.Now, result?.Scan.Nearby, result?.Frame.Time)
                 : [];
             _result = positionsCurrent ? result : null;
+            _resultAt = DateTimeOffset.Now;
             if (_result != null)
             {
                 var at = _result.Frame.Time;
@@ -524,12 +562,20 @@ public sealed class PlayerFinderPlugin : IPlugin
                     _chatFrame = _result.Frame;
                     _liveChat = _result.Chat;
                 }
+                // Hand the name tags to the tracker, which follows them on every frame until the next scan.
+                _players.Keep([.. options.Names, .. picked == null ? Array.Empty<string>() : [picked]]);
+                foreach (var player in _result.Scan.Players.Where(p => p.Plate != null)) _tagged[player.Name] = player;
+                _players.Confirm(_result.Frame.Frame, _result.Scan.Players.Where(p => p.Plate != null)
+                    .Select(p => new TagSighting(p.Name, p.Plate!.Value, p.Player)), at);
+                _players.Follow(_chatFrame.Frame, _chatFrame.Time);
                 RenderOverlay(_chatFrame);
             }
             else
             {
+                Trace($"cleared: {status}");
                 _context.Overlay.Clear();
             }
+            if (_result != null) Trace($"scan: {string.Join(", ", _result.Scan.Players.Select(p => $"{p.Name}@{p.Player}"))}");
             seen = new Dictionary<string, LastSeen>(_seen, StringComparer.OrdinalIgnoreCase);
             pickedSeen = _pickedSeen;
         }
@@ -585,6 +631,14 @@ public sealed class PlayerFinderPlugin : IPlugin
     }
 
     static bool Same(string? a, string? b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+    static readonly bool Tracing = Environment.GetEnvironmentVariable("MAPLELITE_OVERLAY_TRACE") == "1";
+
+    /// <summary>With MAPLELITE_OVERLAY_TRACE=1, logs why outlines change (to see why they come and go).</summary>
+    void Trace(string message)
+    {
+        if (Tracing) _context.Log($"player trace {DateTimeOffset.Now:HH:mm:ss.fff}: {message}");
+    }
 
     static Region Union(Region a, Region b)
     {

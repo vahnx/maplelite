@@ -27,7 +27,7 @@ public static class OverlayPainter
         foreach (var it in items.OrderBy(it => !it.Dim))
         {
             float x = (float)it.X, y = (float)it.Y;
-            var color = ToneColor(it.Tone);
+            var color = it.ColorRgb is { } custom ? new SKColor(custom | 0xFF000000u) : ToneColor(it.Tone);
             if (it.Rectangle is { } box)
             {
                 rectangle.Style = it.Dim ? SKPaintStyle.Fill : SKPaintStyle.Stroke;

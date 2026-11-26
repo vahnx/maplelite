@@ -1,3 +1,4 @@
+using MapleLite.Core.Game;
 using MapleLite.Core.Imaging;
 using MapleLite.Core.Ocr;
 using MapleLite.Plugins.PlayerFinder;
